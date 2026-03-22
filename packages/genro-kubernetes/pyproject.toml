@@ -1,0 +1,128 @@
+# Copyright 2025 Softwell S.r.l. - Licensed under Apache License 2.0
+# See LICENSE file for details
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "genro-kubernetes"
+version = "0.1.0"
+description = "Kubernetes configuration builder for Genropy - validated YAML manifest generation"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [
+    { name = "Genropy Team", email = "info@genropy.org" }
+]
+keywords = [
+    "genropy",
+    "kubernetes",
+    "k8s",
+    "manifest",
+    "configuration",
+    "yaml",
+    "infrastructure",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Systems Administration",
+    "Typing :: Typed",
+]
+dependencies = [
+    "genro-bag>=0.9.0",
+    "genro-builders>=0.2.0",
+    "genro-scriba>=0.1.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-sugar>=0.9",
+    "mypy>=1.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/genropy/genro-kubernetes"
+Repository = "https://github.com/genropy/genro-kubernetes"
+Issues = "https://github.com/genropy/genro-kubernetes/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/genro_kubernetes"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-v --tb=short"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+strict = true
+packages = ["genro_kubernetes"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = [
+    "genro_bag",
+    "genro_bag.*",
+    "genro_builders",
+    "genro_builders.*",
+    "genro_scriba",
+    "genro_scriba.*",
+    "yaml",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "genro_kubernetes.builders.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["genro_kubernetes.kubernetes_compiler", "genro_kubernetes.kubernetes_app"]
+warn_return_any = false
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "N", "UP", "B", "C4", "T10",
+    "ISC", "PIE", "PT", "RSE", "RET", "SIM", "TCH",
+    "ARG", "PL", "RUF",
+]
+ignore = [
+    "PLR0913", "PLR2004", "PIE790", "ARG001", "ARG002",
+    "PLC0415", "PLR0911", "PLR0912", "PLR0915",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/genro_kubernetes/builders/kubernetes_builder.py" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["genro_kubernetes"]
+
+[tool.coverage.run]
+source = ["src/genro_kubernetes"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
