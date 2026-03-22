@@ -148,6 +148,27 @@ Un esempio che:
 3. Modifica `data["web.replicas"]`
 4. Verifica che il PATCH parta verso il cluster
 
+## Nota: collegamento Traefik ↔ Kubernetes Ingress
+
+Traefik puo' funzionare in due modalita':
+
+1. **Standalone (bare metal)**: legge la config da file (YAML/TOML).
+   → Bag → TraefikBuilder → FileTarget (scriba classico)
+
+2. **Come Ingress Controller in K8s**: legge le risorse Ingress e CRD
+   (IngressRoute, Middleware, ecc.) direttamente dall'API server Kubernetes.
+   Non serve piu' il file di config Traefik.
+   → Bag → KubernetesBuilder (Ingress/IngressRoute) → K8sTarget (API)
+
+Juggler gestisce entrambi i casi dallo stesso punto. Stessa Bag, stesso dato,
+target diverso. Questo unifica genro-traefik e genro-kubernetes quando Traefik
+gira dentro il cluster: la configurazione di routing diventa una risorsa
+Kubernetes (Ingress) invece di un file Traefik.
+
+Implicazione: il KubernetesBuilder potrebbe avere bisogno di supportare le CRD
+Traefik (IngressRoute, Middleware, ServersTransport) per coprire i casi avanzati
+che un semplice Ingress non gestisce.
+
 ## Cosa NON fa il primo prototipo
 
 - Niente feedback loop (watch dal cluster → Bag) — viene dopo
