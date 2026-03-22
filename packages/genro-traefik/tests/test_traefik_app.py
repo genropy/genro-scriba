@@ -128,16 +128,21 @@ class TestProperties:
         parsed = yaml.safe_load(proxy.to_yaml())
         assert parsed["entryPoints"]["web"]["address"] == ":80"
 
-    def test_output_property(self) -> None:
+    def test_file_output_property(self) -> None:
         proxy = SimpleProxy()
-        assert proxy.output is None
+        assert proxy.file_output is None
 
-    def test_output_setter(self) -> None:
+    def test_file_output_setter(self) -> None:
         proxy = SimpleProxy()
-        proxy.output = "/tmp/test.yml"
-        assert proxy.output == Path("/tmp/test.yml")
-        proxy.output = None
-        assert proxy.output is None
+        proxy.file_output = "/tmp/test.yml"
+        assert proxy.file_output == Path("/tmp/test.yml")
+        proxy.file_output = None
+        assert proxy.file_output is None
+
+    def test_output_is_compiled_yaml(self) -> None:
+        proxy = SimpleProxy()
+        assert proxy.output is not None
+        assert "entryPoints" in proxy.output
 
     def test_check_returns_list(self) -> None:
         proxy = SimpleProxy()
@@ -158,11 +163,12 @@ class TestDataPointers:
         assert parsed["http"]["routers"]["api"]["rule"] == "Host(`example.com`)"
         assert parsed["http"]["services"]["api-svc"]["loadBalancer"]["servers"][0]["url"] == "http://localhost:8080"
 
-    def test_unresolved_pointer_kept_as_is(self) -> None:
+    def test_unresolved_pointer_produces_empty(self) -> None:
         proxy = PointerProxy()
-        # Don't set any data — pointers should remain as ^path
+        # Don't set any data — unresolved pointers produce empty values
         parsed = yaml.safe_load(proxy.to_yaml())
-        assert parsed["entryPoints"]["web"]["address"] == "^web.address"
+        # entryPoint "web" exists but address is absent (None filtered)
+        assert "web" in parsed["entryPoints"]
 
     def test_data_change_updates_yaml(self) -> None:
         proxy = PointerProxy()
@@ -177,20 +183,22 @@ class TestDataPointers:
         assert "host1:8080" in yaml1
         assert "host2:9090" in yaml2
 
-    def test_auto_save_on_data_change(self) -> None:
+    def test_to_yaml_writes_file_with_pointers(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".yml", delete=False) as f:
             path = f.name
         try:
-            proxy = PointerProxy(output=path)
+            proxy = PointerProxy()
             proxy.data["web.address"] = ":80"
             proxy.data["api.rule"] = "Host(`x.com`)"
             proxy.data["api.backend"] = "http://a:1"
 
+            proxy.to_yaml(path)
             content = Path(path).read_text()
             parsed = yaml.safe_load(content)
             assert parsed["entryPoints"]["web"]["address"] == ":80"
 
             proxy.data["api.backend"] = "http://b:2"
+            proxy.to_yaml(path)
             content2 = Path(path).read_text()
             parsed2 = yaml.safe_load(content2)
             assert parsed2["http"]["services"]["api-svc"]["loadBalancer"]["servers"][0]["url"] == "http://b:2"

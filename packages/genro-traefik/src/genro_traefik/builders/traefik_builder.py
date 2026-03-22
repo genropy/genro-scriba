@@ -17,7 +17,7 @@ Naming:
 from __future__ import annotations
 
 from genro_builders import BagBuilderBase
-from genro_builders.builder import element
+from genro_builders.builder import component, element
 
 from ..traefik_compiler import render_attrs
 
@@ -45,6 +45,25 @@ def _middleware(mw_type_key, node, result, builder):
     result[name] = {mw_type_key: render_attrs(node, builder)}
 
 
+def _deep_merge(target, source):
+    """Recursively merge source dict into target dict."""
+    for key, value in source.items():
+        if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+            _deep_merge(target[key], value)
+        else:
+            target[key] = value
+
+
+def _merge_children(node, result, builder):
+    """Merge component children into parent dict (transparent component)."""
+    from genro_traefik.traefik_compiler import walk
+    from genro_bag import Bag
+    node_value = node.get_value(static=True)
+    if isinstance(node_value, Bag):
+        children = walk(node_value, builder)
+        _deep_merge(result, children)
+
+
 class TraefikBuilder(BagBuilderBase):
     """Traefik v3 configuration grammar."""
 
@@ -55,7 +74,8 @@ class TraefikBuilder(BagBuilderBase):
     @element(sub_tags=(
         "entryPoint, api, certificateResolver, providers,"
         " log, accessLog, metrics, tracing, ping,"
-        " http, tcp, udp, globalTls"
+        " http, tcp, udp, globalTls,"
+        " https_setup, security_headers, web_service"
     ))
     def traefik(self, checkNewVersion: bool = True,
                 sendAnonymousUsage: bool = True):
@@ -299,7 +319,7 @@ class TraefikBuilder(BagBuilderBase):
     # DYNAMIC: HTTP
     # =========================================================================
 
-    @element(sub_tags="routers, services, middlewares, serversTransports")
+    @element(sub_tags="routers, services, middlewares, serversTransports, web_service")
     def http(self):
         """HTTP dynamic configuration."""
         ...
@@ -323,7 +343,8 @@ class TraefikBuilder(BagBuilderBase):
         " addPrefix, replacePath, replacePathRegex,"
         " redirectScheme, redirectRegex,"
         " errorsPage, grpcWeb,"
-        " passTLSClientCert, mwPlugin"
+        " passTLSClientCert, mwPlugin,"
+        " security_headers"
     ))
     def middlewares(self):
         """HTTP middlewares container."""
@@ -1013,3 +1034,82 @@ class TraefikBuilder(BagBuilderBase):
 
     def compile_tlsStore(self, node, result):
         _named("stores", node, result, self)
+
+    # =========================================================================
+    # COMPONENTS — reusable configuration patterns
+    # =========================================================================
+
+    def compile_https_setup(self, node, result):
+        """Merge https_setup children into parent (transparent component)."""
+        _merge_children(node, result, self)
+
+    @component(sub_tags="")
+    def https_setup(self, c, email="", storage="/etc/traefik/acme.json", **_kw):
+        """Complete HTTPS setup: HTTP→HTTPS redirect + Let's Encrypt.
+
+        Creates entryPoint web (port 80 with redirect), entryPoint
+        websecure (port 443), certificateResolver with ACME httpChallenge.
+
+        Args:
+            email: ACME registration email (required by Let's Encrypt).
+            storage: Path to ACME certificate storage file.
+        """
+        web = c.entryPoint(name="web", address=":80")
+        web.redirect(to="websecure", scheme="https", permanent=True)
+        c.entryPoint(name="websecure", address=":443")
+        le = c.certificateResolver(name="letsencrypt")
+        acme = le.acme(email=email, storage=storage)
+        acme.httpChallenge(entryPoint="web")
+
+    def compile_security_headers(self, node, result):
+        """Merge security_headers children into parent (transparent component)."""
+        _merge_children(node, result, self)
+
+    @component(sub_tags="")
+    def security_headers(self, c, name="security-headers", **_kw):
+        """OWASP-recommended security headers middleware.
+
+        Adds HSTS, X-Content-Type-Options, X-XSS-Protection,
+        X-Frame-Options, and Referrer-Policy headers.
+
+        Args:
+            name: Middleware name (default: "security-headers").
+        """
+        c.headers(name=name,
+                  stsSeconds=63072000, stsIncludeSubdomains=True,
+                  stsPreload=True, contentTypeNosniff=True,
+                  browserXssFilter=True, frameDeny=True,
+                  referrerPolicy="strict-origin-when-cross-origin")
+
+    def compile_web_service(self, node, result):
+        """Merge web_service children into parent (transparent component)."""
+        _merge_children(node, result, self)
+
+    @component(sub_tags="")
+    def web_service(self, c, name="", rule="", backends=None,
+                    health_path="/health", middlewares=None,
+                    cert_resolver="letsencrypt", **_kw):
+        """Complete web service: router + TLS + load balancer + health check.
+
+        Args:
+            name: Service name (used as base for router and service names).
+            rule: Traefik routing rule (e.g. "Host(`api.example.com`)").
+            backends: List of backend URLs.
+            health_path: Health check endpoint path.
+            middlewares: List of middleware names to apply.
+            cert_resolver: Certificate resolver name for TLS.
+        """
+        svc_name = f"{name}-svc"
+        chain = middlewares or []
+
+        r = c.routers().router(name=f"{name}-router",
+                               rule=rule, service=svc_name,
+                               entryPoints=["websecure"],
+                               middlewares=chain)
+        r.routerTls(certResolver=cert_resolver)
+
+        svc = c.services().service(name=svc_name)
+        lb = svc.loadBalancer(passHostHeader=True)
+        for url in (backends or []):
+            lb.server(url=url)
+        lb.healthCheck(path=health_path, interval="10s", timeout="3s")

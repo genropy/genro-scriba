@@ -17,6 +17,7 @@ rendering (e.g. Traefik nests underscored attrs, Compose keeps them flat).
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from genro_bag import Bag
@@ -72,6 +73,8 @@ class YamlCompilerBase(BagCompilerBase):
                 continue
             if attr_value is None:
                 continue
+            if isinstance(attr_value, (dict, list)):
+                attr_value = copy.deepcopy(attr_value)
             self._render_attr_entry(attr_name, attr_value, result)
 
         # Children

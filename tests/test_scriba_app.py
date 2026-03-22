@@ -7,10 +7,8 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Any
 
 import yaml
-
 from genro_bag import Bag
 from genro_scriba import ScribaApp
 
@@ -58,7 +56,6 @@ class TestDependencyTracking:
         assert "web.port" in t.resolved_paths
         assert "api.rule" in t.resolved_paths
         assert "api.backend" in t.resolved_paths
-        # Traefik does NOT depend on db paths
         assert "db.host" not in t.resolved_paths
         assert "db.password" not in t.resolved_paths
 
@@ -67,7 +64,6 @@ class TestDependencyTracking:
         c = infra._slots["compose"]
         assert "db.host" in c.resolved_paths
         assert "db.password" in c.resolved_paths
-        # Compose does NOT depend on traefik paths
         assert "web.port" not in c.resolved_paths
         assert "api.rule" not in c.resolved_paths
 
@@ -128,7 +124,6 @@ class TestSelectiveRecompile:
                 compose_output=str(compose_path),
             )
 
-            # Set initial data — triggers auto-save to both files
             infra.data = {
                 "web.port": ":80",
                 "api.rule": "Host(`a.com`)",
@@ -137,16 +132,13 @@ class TestSelectiveRecompile:
                 "db.password": "pw1",
             }
 
-            # Both files should exist after data setter
             assert traefik_path.exists()
             assert compose_path.exists()
 
-            # Change a traefik-only value → only traefik should recompile
             infra.data["web.port"] = ":8080"
             traefik_parsed = yaml.safe_load(traefik_path.read_text())
             assert traefik_parsed["entryPoints"]["web"]["address"] == ":8080"
 
-            # Change a compose-only value → only compose should recompile
             infra.data["db.password"] = "new_pw"
             compose_parsed = yaml.safe_load(compose_path.read_text())
             assert compose_parsed["services"]["db"]["environment"]["POSTGRES_PASSWORD"] == "new_pw"

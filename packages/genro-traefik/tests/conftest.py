@@ -8,22 +8,21 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
-from genro_bag import Bag
+from genro_builders import BuilderBag
 from genro_traefik import TraefikApp
 from genro_traefik.builders.traefik_builder import TraefikBuilder
 
 
 @pytest.fixture
-def store() -> Bag:
-    """A fresh Bag with TraefikBuilder, root traefik node already created."""
-    bag = Bag(builder=TraefikBuilder)
+def store() -> BuilderBag:
+    """A fresh BuilderBag with TraefikBuilder, root traefik node already created."""
+    bag = BuilderBag(builder=TraefikBuilder)
     bag.traefik(name="test")
     return bag
 
 
 @pytest.fixture
-def root(store: Bag) -> Any:
+def root(store: BuilderBag) -> Any:
     """The traefik root BagNode."""
     return store.get_node("test")
 

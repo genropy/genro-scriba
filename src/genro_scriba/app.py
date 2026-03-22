@@ -70,13 +70,14 @@ class _BuilderSlot:
 
     def compile_to_dict(self) -> dict[str, Any]:
         """Compile (materialize + resolve pointers) then walk to dict."""
-        self.resolved_paths.clear()
+        self.resolved_paths = _collect_resolved_paths(self.root)
         compiled_bag = self._bag_compiler.compile(self.store, self._data)
         compiled_nodes = list(compiled_bag)
         if not compiled_nodes:
             return {}
         result = self.compiler.compile_to_dict(compiled_nodes[0], self.store.builder)
-        self.resolved_paths = _collect_resolved_paths(compiled_nodes[0])
+        if self._data is not None:
+            _resolve_dict_pointers(result, self._data)
         return result
 
     def depends_on(self, changed_path: str) -> bool:
@@ -98,6 +99,21 @@ class _BuilderSlot:
         if dest:
             Path(dest).write_text(yaml_str, encoding="utf-8")
         return yaml_str
+
+
+def _resolve_dict_pointers(obj: Any, data: Bag) -> Any:
+    """Resolve ^pointer strings inside dicts and lists (post-compile pass)."""
+    if isinstance(obj, dict):
+        for key in obj:
+            obj[key] = _resolve_dict_pointers(obj[key], data)
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            obj[i] = _resolve_dict_pointers(item, data)
+    elif isinstance(obj, str) and obj.startswith("^"):
+        path = obj[1:]
+        resolved = data[path]
+        return resolved if resolved is not None else obj
+    return obj
 
 
 def _collect_resolved_paths(root_node: Any) -> set[str]:

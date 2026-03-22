@@ -8,6 +8,7 @@ from __future__ import annotations
 import yaml
 
 from genro_bag import Bag
+from genro_builders import BuilderBag
 from genro_compose import ComposeApp
 from genro_compose.builders.compose_builder import ComposeBuilder
 from genro_compose.compose_compiler import compile_to_dict
@@ -15,7 +16,7 @@ from genro_compose.compose_compiler import compile_to_dict
 
 def _build(recipe_fn) -> dict:
     """Helper: create store, call recipe, compile to dict."""
-    store = Bag(builder=ComposeBuilder)
+    store = BuilderBag(builder=ComposeBuilder)
     store.builder.data = Bag()
     root = store.compose(name="test")
     recipe_fn(root)

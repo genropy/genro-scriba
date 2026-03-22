@@ -100,6 +100,7 @@ class ComposeApp(BagAppBase):
         Returns:
             YAML string.
         """
+        self.compile()
         yaml_str = self.output or ""
         dest = destination or self._file_output
         if dest:

@@ -12,6 +12,7 @@ from __future__ import annotations
 import yaml
 
 from genro_bag import Bag
+from genro_builders import BuilderBag
 from genro_traefik import TraefikApp
 from genro_traefik.builders.traefik_builder import TraefikBuilder
 from genro_traefik.traefik_compiler import compile_to_dict
@@ -19,7 +20,7 @@ from genro_traefik.traefik_compiler import compile_to_dict
 
 def _build_and_compile(recipe_fn) -> dict:
     """Helper: create store, call recipe, compile to dict."""
-    store = Bag(builder=TraefikBuilder)
+    store = BuilderBag(builder=TraefikBuilder)
     store.builder.data = Bag()  # prevent ^pointer resolution errors
     root = store.traefik(name="t")
     recipe_fn(root)
