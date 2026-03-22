@@ -14,8 +14,15 @@ Install individual builders or everything:
 __version__ = "0.1.0"
 
 from .app import ScribaApp
+from .artifact_hub import ArtifactHub
 from .yaml_compiler import YamlCompilerBase
 
 CompilerBase = YamlCompilerBase
 
-__all__ = ["CompilerBase", "ScribaApp", "YamlCompilerBase", "__version__"]
+__all__ = [
+    "ArtifactHub",
+    "CompilerBase",
+    "ScribaApp",
+    "YamlCompilerBase",
+    "__version__",
+]
