@@ -30,9 +30,12 @@ __version__ = "0.1.0"
 
 from .builders.kubernetes_builder import KubernetesBuilder
 from .kubernetes_app import KubernetesApp
+from .recipe_from_manifest import recipe_from_helm, recipe_from_manifest
 
 __all__ = [
     "KubernetesApp",
     "KubernetesBuilder",
     "__version__",
+    "recipe_from_helm",
+    "recipe_from_manifest",
 ]
