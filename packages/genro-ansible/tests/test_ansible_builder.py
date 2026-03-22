@@ -66,7 +66,7 @@ class TestPlay:
 
 
 # =========================================================================
-# TASK
+# TASK with args_* parameters
 # =========================================================================
 
 
@@ -76,7 +76,7 @@ class TestTask:
         def recipe(root):
             play = root.play(name="Setup", hosts="all")
             play.task(name="Install nginx", module="apt",
-                      args={"name": "nginx", "state": "present"})
+                      args_name="nginx", args_state="present")
 
         play = _build(recipe)[0]
         tasks = play["tasks"]
@@ -88,9 +88,9 @@ class TestTask:
         def recipe(root):
             play = root.play(name="Setup", hosts="all")
             play.task(name="Install nginx", module="apt",
-                      args={"name": "nginx", "state": "present"})
+                      args_name="nginx", args_state="present")
             play.task(name="Start nginx", module="systemd",
-                      args={"name": "nginx", "state": "started", "enabled": True})
+                      args_name="nginx", args_state="started", args_enabled=True)
 
         play = _build(recipe)[0]
         assert len(play["tasks"]) == 2
@@ -100,7 +100,7 @@ class TestTask:
         def recipe(root):
             play = root.play(name="Setup", hosts="all")
             play.task(name="Install apt pkg", module="apt",
-                      args={"name": "nginx"},
+                      args_name="nginx",
                       when="ansible_os_family == 'Debian'")
 
         task = _build(recipe)[0]["tasks"][0]
@@ -110,7 +110,7 @@ class TestTask:
         def recipe(root):
             play = root.play(name="Check", hosts="all")
             play.task(name="Check file", module="stat",
-                      args={"path": "/etc/nginx/nginx.conf"},
+                      args_path="/etc/nginx/nginx.conf",
                       register="nginx_conf")
 
         task = _build(recipe)[0]["tasks"][0]
@@ -120,7 +120,7 @@ class TestTask:
         def recipe(root):
             play = root.play(name="Setup", hosts="all")
             play.task(name="Copy config", module="copy",
-                      args={"src": "nginx.conf", "dest": "/etc/nginx/nginx.conf"},
+                      args_src="nginx.conf", args_dest="/etc/nginx/nginx.conf",
                       notify="restart nginx")
 
         task = _build(recipe)[0]["tasks"][0]
@@ -130,7 +130,7 @@ class TestTask:
         def recipe(root):
             play = root.play(name="Mixed", hosts="all")
             play.task(name="Root task", module="apt",
-                      args={"name": "nginx"}, become=True)
+                      args_name="nginx", become=True)
 
         task = _build(recipe)[0]["tasks"][0]
         assert task["become"] is True
@@ -139,17 +139,18 @@ class TestTask:
         def recipe(root):
             play = root.play(name="Setup", hosts="all")
             play.task(name="Install packages", module="apt",
-                      args={"name": "{{ item }}", "state": "present"},
+                      args_name="$item", args_state="present",
                       loop=["nginx", "curl", "vim"])
 
         task = _build(recipe)[0]["tasks"][0]
         assert task["loop"] == ["nginx", "curl", "vim"]
+        assert task["apt"]["name"] == "{{ item }}"
 
     def test_ignore_errors(self) -> None:
         def recipe(root):
             play = root.play(name="Setup", hosts="all")
             play.task(name="Try something", module="shell",
-                      args={"cmd": "test -f /opt/app"},
+                      args_cmd="test -f /opt/app",
                       ignore_errors=True)
 
         task = _build(recipe)[0]["tasks"][0]
@@ -165,6 +166,47 @@ class TestTask:
 
 
 # =========================================================================
+# $ VARIABLE RESOLUTION
+# =========================================================================
+
+
+class TestAnsibleVars:
+
+    def test_dollar_becomes_jinja2(self) -> None:
+        def recipe(root):
+            play = root.play(name="Setup", hosts="all")
+            play.task(name="Create user", module="user",
+                      args_name="$deploy_user", args_shell="/bin/bash")
+
+        task = _build(recipe)[0]["tasks"][0]
+        assert task["user"]["name"] == "{{ deploy_user }}"
+        assert task["user"]["shell"] == "/bin/bash"
+
+    def test_dollar_in_loop(self) -> None:
+        def recipe(root):
+            play = root.play(name="Setup", hosts="all")
+            play.task(name="Install", module="apt",
+                      args_name="$item", args_state="present",
+                      loop=["nginx", "curl"])
+
+        task = _build(recipe)[0]["tasks"][0]
+        assert task["apt"]["name"] == "{{ item }}"
+
+    def test_mixed_literal_and_var(self) -> None:
+        def recipe(root):
+            play = root.play(name="Setup", hosts="all")
+            play.task(name="Create dir", module="file",
+                      args_path="$app_dir", args_state="directory",
+                      args_owner="$deploy_user", args_mode="0755")
+
+        task = _build(recipe)[0]["tasks"][0]
+        assert task["file"]["path"] == "{{ app_dir }}"
+        assert task["file"]["state"] == "directory"
+        assert task["file"]["owner"] == "{{ deploy_user }}"
+        assert task["file"]["mode"] == "0755"
+
+
+# =========================================================================
 # HANDLER
 # =========================================================================
 
@@ -175,10 +217,10 @@ class TestHandler:
         def recipe(root):
             play = root.play(name="Setup", hosts="all")
             play.task(name="Copy config", module="copy",
-                      args={"src": "nginx.conf", "dest": "/etc/nginx/nginx.conf"},
+                      args_src="nginx.conf", args_dest="/etc/nginx/nginx.conf",
                       notify="restart nginx")
             play.handler(name="restart nginx", module="systemd",
-                         args={"name": "nginx", "state": "restarted"})
+                         args_name="nginx", args_state="restarted")
 
         play = _build(recipe)[0]
         assert "handlers" in play
@@ -193,14 +235,14 @@ class TestHandler:
 # =========================================================================
 
 
-class TestVars:
+class TestVarsSection:
 
     def test_vars_section(self) -> None:
         def recipe(root):
             play = root.play(name="Setup", hosts="all")
             play.vars_section(data={"http_port": 80, "max_clients": 200})
             play.task(name="Use var", module="debug",
-                      args={"msg": "Port is {{ http_port }}"})
+                      args_msg="$http_port")
 
         play = _build(recipe)[0]
         assert play["vars"]["http_port"] == 80
@@ -227,7 +269,7 @@ class TestAnsibleApp:
             def recipe(self, root):
                 play = root.play(name="Setup", hosts="all", become=True)
                 play.task(name="Install nginx", module="apt",
-                          args={"name": "nginx", "state": "present"})
+                          args_name="nginx", args_state="present")
 
         app = MyPlaybook()
         yaml_str = app.to_yaml()
@@ -242,11 +284,11 @@ class TestAnsibleApp:
             def recipe(self, root):
                 p1 = root.play(name="Setup web", hosts="webservers", become=True)
                 p1.task(name="Install nginx", module="apt",
-                        args={"name": "nginx", "state": "present"})
+                        args_name="nginx", args_state="present")
 
                 p2 = root.play(name="Setup db", hosts="dbservers", become=True)
                 p2.task(name="Install postgres", module="apt",
-                        args={"name": "postgresql", "state": "present"})
+                        args_name="postgresql", args_state="present")
 
         app = MultiPlay()
         yaml_str = app.to_yaml()
@@ -255,21 +297,21 @@ class TestAnsibleApp:
         assert parsed[0]["hosts"] == "webservers"
         assert parsed[1]["hosts"] == "dbservers"
 
-    def test_complete_playbook(self) -> None:
+    def test_complete_playbook_with_vars(self) -> None:
         class ServerSetup(AnsibleApp):
             def recipe(self, root):
                 play = root.play(name="Configure server", hosts="all",
                                  become=True, gather_facts=True)
                 play.vars_section(data={"http_port": 80})
                 play.task(name="Install packages", module="apt",
-                          args={"name": "{{ item }}", "state": "present"},
+                          args_name="$item", args_state="present",
                           loop=["nginx", "curl"])
                 play.task(name="Copy config", module="template",
-                          args={"src": "nginx.conf.j2",
-                                "dest": "/etc/nginx/nginx.conf"},
+                          args_src="nginx.conf.j2",
+                          args_dest="/etc/nginx/nginx.conf",
                           notify="restart nginx")
                 play.handler(name="restart nginx", module="systemd",
-                             args={"name": "nginx", "state": "restarted"})
+                             args_name="nginx", args_state="restarted")
 
         app = ServerSetup()
         yaml_str = app.to_yaml()
@@ -279,5 +321,6 @@ class TestAnsibleApp:
         assert play["vars"]["http_port"] == 80
         assert len(play["tasks"]) == 2
         assert play["tasks"][0]["loop"] == ["nginx", "curl"]
+        assert play["tasks"][0]["apt"]["name"] == "{{ item }}"
         assert play["tasks"][1]["notify"] == "restart nginx"
         assert play["handlers"][0]["systemd"]["state"] == "restarted"

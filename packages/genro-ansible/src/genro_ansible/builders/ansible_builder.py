@@ -4,12 +4,21 @@
 """AnsibleBuilder - Ansible playbook as a semantic Bag builder.
 
 Each @element defines an Ansible concept: playbook, play, task, handler,
-vars. The task element uses a generic module + args approach that covers
-ALL Ansible modules with a single element.
+vars. The task element covers ALL Ansible modules via flat args_* parameters.
 
-The builder IS the documentation — every @element docstring is an encyclopedic
-reference for the corresponding Ansible concept. Reading the builder teaches
-Ansible.
+Module arguments are passed as args_<param>=<value>:
+    play.task(name="Install nginx", module="apt",
+              args_name="nginx", args_state="present")
+
+Values prefixed with $ are Ansible variables, rendered as {{ var }}:
+    play.task(name="Create user", module="user",
+              args_name="$deploy_user", args_shell="/bin/bash")
+    # → user: {name: "{{ deploy_user }}", shell: /bin/bash}
+
+Three prefix conventions:
+    ^value  → genro-scriba pointer (resolved from data Bag at compile time)
+    $value  → Ansible variable (rendered as {{ value }} in YAML)
+    value   → literal (passed as-is)
 
 Docs: https://docs.ansible.com/ansible/latest/playbook_guide/
 """
@@ -27,7 +36,7 @@ class AnsibleBuilder(BagBuilderBase):
 
     Models Ansible playbooks with 5 elements: playbook, play, task,
     handler, vars_section. The task element covers ALL Ansible modules
-    via generic module + args parameters.
+    via flat args_* parameters.
 
     YAML output follows Ansible format: a list of plays (not a dict).
 
@@ -91,7 +100,6 @@ class AnsibleBuilder(BagBuilderBase):
         if play_vars:
             play["vars"] = play_vars
 
-        # Collect children: tasks, handlers, vars_section
         from genro_bag import Bag
         node_value = node.get_value(static=True)
         if isinstance(node_value, Bag):
@@ -122,7 +130,6 @@ class AnsibleBuilder(BagBuilderBase):
 
     @element(sub_tags="")
     def task(self, name: str = "", module: str = "",
-             args: dict | None = None,
              when: str = "", register: str = "", notify: str = "",
              become: bool = False, loop: list | None = None,
              ignore_errors: bool = False):
@@ -132,29 +139,37 @@ class AnsibleBuilder(BagBuilderBase):
         Each task should be idempotent — running it twice produces the
         same result.
 
-        The module is specified as a string name. Arguments are a dict
-        passed directly to the module. This covers ALL Ansible modules.
+        Module arguments are passed as args_<param>=<value> attributes.
+        Values prefixed with $ are Ansible variables (rendered as {{ var }}).
+
+        Example:
+            play.task(name="Install nginx", module="apt",
+                      args_name="nginx", args_state="present")
+
+            play.task(name="Create user", module="user",
+                      args_name="$deploy_user", args_shell="/bin/bash")
+            # → user: {name: "{{ deploy_user }}", shell: /bin/bash}
 
         Common modules:
-            apt:             {"name": "nginx", "state": "present"}
-            copy:            {"src": "file.conf", "dest": "/etc/file.conf"}
-            template:        {"src": "tmpl.j2", "dest": "/etc/app.conf"}
-            service/systemd: {"name": "nginx", "state": "started", "enabled": True}
-            user:            {"name": "deploy", "shell": "/bin/bash"}
-            file:            {"path": "/data", "state": "directory", "mode": "0755"}
-            shell:           {"cmd": "echo hello"}
-            authorized_key:  {"user": "deploy", "key": "ssh-rsa ..."}
+            apt:      args_name="nginx", args_state="present"
+            copy:     args_src="file.conf", args_dest="/etc/file.conf"
+            template: args_src="tmpl.j2", args_dest="/etc/app.conf"
+            systemd:  args_name="nginx", args_state="started", args_enabled=True
+            user:     args_name="deploy", args_shell="/bin/bash"
+            file:     args_path="/data", args_state="directory", args_mode="0755"
+            shell:    args_cmd="echo hello"
 
         Args:
             name: Task description (shown during execution).
             module: Ansible module name ("apt", "copy", "systemd", ...).
-            args: Module arguments as dict.
             when: Conditional expression ("ansible_os_family == 'Debian'").
             register: Save output to this variable name.
             notify: Handler name to trigger on change.
             become: Run this task with sudo (overrides play-level).
             loop: List to iterate over (task runs once per item).
             ignore_errors: Continue on failure (default: False).
+
+        Additional args_* kwargs are passed as module arguments.
 
         Docs: https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_intro.html#tasks-list
         """
@@ -165,22 +180,24 @@ class AnsibleBuilder(BagBuilderBase):
     # =================================================================
 
     @element(sub_tags="")
-    def handler(self, name: str = "", module: str = "",
-                args: dict | None = None):
+    def handler(self, name: str = "", module: str = ""):
         """Handler — a task triggered by notify.
 
         Handlers run once at the end of a play, only if notified by a
         task that made a change. Typical use: restart a service after
         config changes.
 
-        Example: a task installs nginx.conf with notify="restart nginx".
-        The handler "restart nginx" runs systemd restart once, even if
-        multiple tasks notified it.
+        Module arguments are passed as args_* attributes, same as task().
+
+        Example:
+            play.handler(name="restart nginx", module="systemd",
+                         args_name="nginx", args_state="restarted")
 
         Args:
             name: Handler name (must match the notify string in tasks).
             module: Ansible module name.
-            args: Module arguments as dict.
+
+        Additional args_* kwargs are passed as module arguments.
 
         Docs: https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_handlers.html
         """
@@ -205,11 +222,27 @@ class AnsibleBuilder(BagBuilderBase):
         ...
 
 
+def _resolve_ansible_value(value: Any) -> Any:
+    """Convert $variable references to {{ variable }} Jinja2 syntax."""
+    if isinstance(value, str) and value.startswith("$"):
+        return "{{ " + value[1:] + " }}"
+    return value
+
+
+def _collect_module_args(node: Any) -> dict[str, Any]:
+    """Collect args_* attributes from a node into a module args dict."""
+    args: dict[str, Any] = {}
+    for attr_name, attr_value in node.attr.items():
+        if attr_name.startswith("args_"):
+            param_name = attr_name[5:]
+            args[param_name] = _resolve_ansible_value(attr_value)
+    return args
+
+
 def _render_task(node: Any) -> dict[str, Any]:
     """Render a task or handler node to Ansible YAML dict format."""
     name = node.attr.get("name", "")
     module = node.attr.get("module", "")
-    args = node.attr.get("args")
     when = node.attr.get("when", "")
     register = node.attr.get("register", "")
     notify = node.attr.get("notify", "")
@@ -219,13 +252,14 @@ def _render_task(node: Any) -> dict[str, Any]:
 
     task_dict: dict[str, Any] = {"name": name}
 
+    args = _collect_module_args(node)
     if module and args:
         task_dict[module] = args
     elif module:
         task_dict[module] = None
 
     if when:
-        task_dict["when"] = when
+        task_dict["when"] = _resolve_ansible_value(when)
     if register:
         task_dict["register"] = register
     if notify:
@@ -233,7 +267,7 @@ def _render_task(node: Any) -> dict[str, Any]:
     if become:
         task_dict["become"] = True
     if loop:
-        task_dict["loop"] = loop
+        task_dict["loop"] = [_resolve_ansible_value(item) for item in loop]
     if ignore_errors:
         task_dict["ignore_errors"] = True
 

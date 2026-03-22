@@ -3,8 +3,8 @@
 
 """Server setup — Ansible playbook for web server provisioning.
 
-Installs nginx, configures firewall, creates deploy user, sets up
-the application directory structure.
+Module arguments use args_* parameters. Values prefixed with $
+are Ansible variables (rendered as {{ var }} in YAML).
 
 Run:
     PYTHONPATH=src python examples/server_setup/server_setup.py
@@ -30,42 +30,42 @@ class ServerSetup(AnsibleApp):
         })
 
         sys_play.task(name="Update apt cache", module="apt",
-                      args={"update_cache": True, "cache_valid_time": 3600})
+                      args_update_cache=True, args_cache_valid_time=3600)
         sys_play.task(name="Install packages", module="apt",
-                      args={"name": "{{ item }}", "state": "present"},
+                      args_name="$item", args_state="present",
                       loop=["nginx", "curl", "ufw", "python3-pip"])
         sys_play.task(name="Create deploy user", module="user",
-                      args={"name": "{{ deploy_user }}",
-                            "shell": "/bin/bash",
-                            "create_home": True})
+                      args_name="$deploy_user",
+                      args_shell="/bin/bash",
+                      args_create_home=True)
         sys_play.task(name="Create app directory", module="file",
-                      args={"path": "{{ app_dir }}",
-                            "state": "directory",
-                            "owner": "{{ deploy_user }}",
-                            "mode": "0755"})
+                      args_path="$app_dir",
+                      args_state="directory",
+                      args_owner="$deploy_user",
+                      args_mode="0755")
         sys_play.task(name="Allow SSH", module="ufw",
-                      args={"rule": "allow", "port": "22"})
+                      args_rule="allow", args_port="22")
         sys_play.task(name="Allow HTTP", module="ufw",
-                      args={"rule": "allow", "port": "80"})
+                      args_rule="allow", args_port="80")
         sys_play.task(name="Allow HTTPS", module="ufw",
-                      args={"rule": "allow", "port": "443"})
+                      args_rule="allow", args_port="443")
         sys_play.task(name="Enable firewall", module="ufw",
-                      args={"state": "enabled"})
+                      args_state="enabled")
 
         # Play 2: Nginx configuration
         nginx_play = root.play(name="Configure nginx", hosts="webservers",
                                become=True)
         nginx_play.task(name="Copy nginx config", module="template",
-                        args={"src": "nginx.conf.j2",
-                              "dest": "/etc/nginx/sites-available/app"},
+                        args_src="nginx.conf.j2",
+                        args_dest="/etc/nginx/sites-available/app",
                         notify="restart nginx")
         nginx_play.task(name="Enable site", module="file",
-                        args={"src": "/etc/nginx/sites-available/app",
-                              "dest": "/etc/nginx/sites-enabled/app",
-                              "state": "link"},
+                        args_src="/etc/nginx/sites-available/app",
+                        args_dest="/etc/nginx/sites-enabled/app",
+                        args_state="link",
                         notify="restart nginx")
         nginx_play.handler(name="restart nginx", module="systemd",
-                           args={"name": "nginx", "state": "restarted"})
+                           args_name="nginx", args_state="restarted")
 
 
 def main():

@@ -3,11 +3,12 @@
 
 """Web application with database — Docker Compose configuration.
 
-Uses @component shortcuts for common patterns:
-- postgres: PostgreSQL service with healthcheck and named volume
-- redis: Redis cache service with named volume
+Uses @component shortcuts and EnvResolver for secrets.
+Database credentials come from environment variables,
+never hardcoded in source.
 
 Run:
+    DB_NAME=myapp DB_USER=app DB_PASSWORD=s3cret \\
     PYTHONPATH=src python examples/web_with_database/web_with_database.py
 """
 
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from genro_bag.resolvers import EnvResolver
 from genro_compose import ComposeApp
 
 
@@ -41,11 +43,12 @@ class WebStack(ComposeApp):
 
 def main():
     stack = WebStack(data={
-        "db.name": "myapp",
-        "db.user": "app",
-        "db.password": "s3cret!",
-        "api.database_url": "postgresql://app:s3cret!@db:5432/myapp",
-        "api.redis_url": "redis://cache:6379/0",
+        "db.name": EnvResolver("DB_NAME", default="myapp"),
+        "db.user": EnvResolver("DB_USER", default="app"),
+        "db.password": EnvResolver("DB_PASSWORD", default="s3cret!"),
+        "api.database_url": EnvResolver("DATABASE_URL",
+                                        default="postgresql://app:s3cret!@db:5432/myapp"),
+        "api.redis_url": EnvResolver("REDIS_URL", default="redis://cache:6379/0"),
     })
 
     dest = Path(__file__).parent / "docker-compose.yml"

@@ -3,10 +3,11 @@
 
 """Simple deployment — Kubernetes manifest with Deployment + Service + Ingress.
 
-The recipe defines STRUCTURE, the data Bag holds VALUES.
-^ pointers are resolved at compile time.
+Uses EnvResolver for environment-specific values: image tag, hostname,
+database password. Same recipe produces different manifests per environment.
 
 Run:
+    API_IMAGE=myapp:v1.2.3 API_HOST=api.example.com DB_PASSWORD=s3cret \\
     PYTHONPATH=src python examples/simple_deployment/simple_deployment.py
 """
 
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from genro_bag.resolvers import EnvResolver
 from genro_kubernetes import KubernetesApp
 
 
@@ -61,9 +63,9 @@ class SimpleDeployment(KubernetesApp):
 
 def main():
     app = SimpleDeployment(data={
-        "api.image": "myapp:v1.2.3",
-        "api.host": "api.example.com",
-        "db.password": "s3cret!",
+        "api.image": EnvResolver("API_IMAGE", default="myapp:v1.2.3"),
+        "api.host": EnvResolver("API_HOST", default="api.example.com"),
+        "db.password": EnvResolver("DB_PASSWORD", default="s3cret!"),
     })
 
     dest = Path(__file__).parent / "manifests.yaml"

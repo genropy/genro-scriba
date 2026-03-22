@@ -3,12 +3,12 @@
 
 """Simple reverse proxy — production-ready Traefik v3 configuration.
 
-Uses @component shortcuts for common patterns:
-- https_setup: HTTP→HTTPS redirect + Let's Encrypt
-- security_headers: OWASP security headers middleware
-- web_service: router + TLS + load balancer + health check
+Uses @component shortcuts for common patterns and EnvResolver for
+environment-specific values (email, hostnames, backend IPs).
 
 Run:
+    ACME_EMAIL=admin@example.com API_RULE="Host(\`api.example.com\`)" \\
+    API_PRIMARY=http://192.168.1.10:8080 API_SECONDARY=http://192.168.1.11:8080 \\
     PYTHONPATH=src python examples/simple_reverse_proxy/simple_reverse_proxy.py
 """
 
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from genro_bag.resolvers import EnvResolver
 from genro_traefik import TraefikApp
 
 
@@ -41,10 +42,10 @@ class SimpleReverseProxy(TraefikApp):
 
 def main():
     proxy = SimpleReverseProxy(data={
-        "acme.email": "admin@example.com",
-        "api.rule": "Host(`api.example.com`)",
-        "api.primary": "http://192.168.1.10:8080",
-        "api.secondary": "http://192.168.1.11:8080",
+        "acme.email": EnvResolver("ACME_EMAIL", default="admin@example.com"),
+        "api.rule": EnvResolver("API_RULE", default="Host(`api.example.com`)"),
+        "api.primary": EnvResolver("API_PRIMARY", default="http://192.168.1.10:8080"),
+        "api.secondary": EnvResolver("API_SECONDARY", default="http://192.168.1.11:8080"),
     })
 
     dest = Path(__file__).parent / "traefik.yml"
