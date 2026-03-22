@@ -6,26 +6,26 @@
 Queries the Artifact Hub public API to discover infrastructure packages.
 No authentication required.
 
-Usage:
+Two modes of use:
+
+1. **ArtifactHub client** — standalone search and detail queries::
+
     from genro_scriba.artifact_hub import ArtifactHub
 
     hub = ArtifactHub()
-
-    # Search Helm charts
     charts = hub.search_charts("postgresql")
-    for chart in charts:
-        print(f"{chart['repo']}/{chart['name']} v{chart['version']}")
-        print(f"  {chart['description']}")
-
-    # Search container images
-    images = hub.search_images("nginx")
-
-    # Get chart details (values, readme, install command)
     detail = hub.chart_detail("bitnami", "postgresql")
-    print(detail['install_command'])
 
-    # Get default values.yaml for a chart
-    values = hub.chart_values("bitnami", "postgresql")
+2. **ArtifactHubResolver** — lazy Bag resolver, like OpenApiResolver::
+
+    from genro_bag import Bag
+    from genro_scriba.artifact_hub import ArtifactHubResolver
+
+    bag = Bag()
+    bag["postgres"] = ArtifactHubResolver("bitnami", "postgresql")
+    bag["postgres"]["version"]       # → "18.5.11"
+    bag["postgres"]["description"]   # → "PostgreSQL (Postgres) is..."
+    bag["postgres"]["images"]        # → Bag of container images
 
 API docs: https://artifacthub.io/docs/api/
 """
@@ -35,6 +35,9 @@ from __future__ import annotations
 import json
 import urllib.request
 from typing import Any
+
+from genro_bag import Bag
+from genro_bag.resolver import BagResolver
 
 _BASE_URL = "https://artifacthub.io/api/v1"
 
@@ -253,3 +256,103 @@ def _detail_from_response(data: dict[str, Any],
         "signed": data.get("signed", False),
         "security_report_summary": data.get("security_report_summary"),
     }
+
+
+class ArtifactHubResolver(BagResolver):
+    """Resolver that loads a Helm chart from Artifact Hub into a Bag.
+
+    Fetches chart detail from the Artifact Hub API and materializes
+    it as a structured Bag. Cached forever by default (chart metadata
+    doesn't change often).
+
+    Parameters (class_args):
+        repo_name: Repository name (e.g. "bitnami").
+        chart_name: Chart name (e.g. "postgresql").
+
+    Parameters (class_kwargs):
+        version: Specific chart version (empty = latest).
+        cache_time: Cache duration in seconds. Default -1 (infinite).
+        read_only: Default True.
+
+    Result Structure:
+        result['name'] -> chart name
+        result['version'] -> chart version
+        result['app_version'] -> app version
+        result['description'] -> chart description
+        result['install_command'] -> helm install command
+        result['keywords'] -> Bag of keywords
+        result['images'] -> Bag of container images
+        result['versions'] -> Bag of available versions
+        result['links'] -> Bag of links
+        result['readme'] -> README content
+
+    Example:
+        >>> bag = Bag()
+        >>> bag['pg'] = ArtifactHubResolver('bitnami', 'postgresql')
+        >>> bag['pg']['version']
+        '18.5.11'
+        >>> bag['pg']['images']['0']['image']
+        'docker.io/bitnami/postgresql:18.3.0-debian-12-r0'
+    """
+
+    class_kwargs: dict[str, Any] = {
+        "cache_time": -1,
+        "read_only": True,
+        "version": "",
+    }
+    class_args: list[str] = ["repo_name", "chart_name"]
+    internal_params: set[str] = {
+        "cache_time", "read_only", "retry_policy", "as_bag", "version",
+    }
+
+    def load(self) -> Bag:
+        """Fetch chart detail from Artifact Hub and return as Bag."""
+        repo_name = self._kw["repo_name"]
+        chart_name = self._kw["chart_name"]
+        version = self._kw["version"]
+
+        hub = ArtifactHub()
+        detail = hub.chart_detail(repo_name, chart_name, version)
+
+        return self._build_bag(detail)
+
+    def _build_bag(self, detail: dict[str, Any]) -> Bag:
+        """Convert chart detail dict to a structured Bag."""
+        result = Bag()
+
+        result["name"] = detail.get("name", "")
+        result["version"] = detail.get("version", "")
+        result["app_version"] = detail.get("app_version", "")
+        result["description"] = detail.get("description", "")
+        result["install_command"] = detail.get("install_command", "")
+        result["home_url"] = detail.get("home_url", "")
+        result["license"] = detail.get("license", "")
+        result["readme"] = detail.get("readme", "")
+
+        keywords = Bag()
+        for i, kw in enumerate(detail.get("keywords", [])):
+            keywords.set_item(str(i), kw)
+        result["keywords"] = keywords
+
+        images = Bag()
+        for i, img in enumerate(detail.get("containers_images", [])):
+            images.set_item(str(i), img.get("image", ""))
+        result["images"] = images
+
+        versions = Bag()
+        for i, ver in enumerate(detail.get("available_versions", [])):
+            versions.set_item(
+                str(i), ver.get("version", ""),
+                _attributes={"created": ver.get("created", "")},
+            )
+        result["versions"] = versions
+
+        links = Bag()
+        for i, link in enumerate(detail.get("links", [])):
+            links.set_item(
+                str(i), link.get("url", ""),
+                _attributes={"name": link.get("name", "")},
+            )
+        result["links"] = links
+
+        return result

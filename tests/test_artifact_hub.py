@@ -10,8 +10,9 @@ They test the actual API integration, not mocked responses.
 from __future__ import annotations
 
 import pytest
+from genro_bag import Bag
 
-from genro_scriba.artifact_hub import ArtifactHub
+from genro_scriba.artifact_hub import ArtifactHub, ArtifactHubResolver
 
 
 @pytest.fixture
@@ -78,3 +79,41 @@ class TestChartDetail:
     def test_has_keywords(self, hub: ArtifactHub) -> None:
         detail = hub.chart_detail("bitnami", "postgresql")
         assert "postgresql" in detail["keywords"]
+
+
+class TestArtifactHubResolver:
+
+    def test_resolver_returns_bag(self) -> None:
+        bag = Bag()
+        bag["pg"] = ArtifactHubResolver("bitnami", "postgresql")
+        result = bag["pg"]
+        assert isinstance(result, Bag)
+
+    def test_resolver_has_version(self) -> None:
+        bag = Bag()
+        bag["pg"] = ArtifactHubResolver("bitnami", "postgresql")
+        assert bag["pg"]["version"]
+
+    def test_resolver_has_description(self) -> None:
+        bag = Bag()
+        bag["pg"] = ArtifactHubResolver("bitnami", "postgresql")
+        assert "PostgreSQL" in bag["pg"]["description"]
+
+    def test_resolver_has_images(self) -> None:
+        bag = Bag()
+        bag["pg"] = ArtifactHubResolver("bitnami", "postgresql")
+        images = bag["pg"]["images"]
+        assert isinstance(images, Bag)
+        assert len(images) > 0
+
+    def test_resolver_has_install_command(self) -> None:
+        bag = Bag()
+        bag["pg"] = ArtifactHubResolver("bitnami", "postgresql")
+        assert "helm" in bag["pg"]["install_command"]
+
+    def test_resolver_cached(self) -> None:
+        bag = Bag()
+        bag["pg"] = ArtifactHubResolver("bitnami", "postgresql")
+        v1 = bag["pg"]["version"]
+        v2 = bag["pg"]["version"]
+        assert v1 == v2
