@@ -169,6 +169,37 @@ Implicazione: il KubernetesBuilder potrebbe avere bisogno di supportare le CRD
 Traefik (IngressRoute, Middleware, ServersTransport) per coprire i casi avanzati
 che un semplice Ingress non gestisce.
 
+## Nota: caso d'uso concreto — Ansible + Hetzner Cloud
+
+Primo terreno di sperimentazione per AnsibleTarget: infrastruttura su Hetzner Cloud.
+
+Flusso:
+```
+Bag (infra desiderata: VM, reti, firewall)
+  → AnsibleBuilder (scriba: genera playbook come dict)
+    → AnsibleTarget (juggler: ansible-runner)
+      → Hetzner Cloud API (via collection hetzner.hcloud)
+```
+
+Requisiti:
+- Collection Ansible: `hetzner.hcloud` (`ansible-galaxy collection install hetzner.hcloud`)
+- Autenticazione: `HCLOUD_TOKEN` (variabile d'ambiente o nell'inventory)
+
+Risorse Hetzner gestibili dalla Bag:
+- `hetzner.hcloud.server` — VM (tipo, immagine, location, SSH key)
+- `hetzner.hcloud.network` / `subnet` — reti private
+- `hetzner.hcloud.firewall` — regole firewall
+- `hetzner.hcloud.volume` — volumi persistenti
+- `hetzner.hcloud.load_balancer` — bilanciamento
+- `hetzner.hcloud.ssh_key` — chiavi SSH
+
+Scenario tipico: la Bag descrive N server con tipo/immagine/rete, ogni modifica
+(aggiunta server, cambio tipo, nuova regola firewall) scatena ansible-runner
+che converge lo stato Hetzner verso quello desiderato.
+
+Dopo il provisioning Hetzner, un secondo passaggio Ansible configura i server
+(apt, docker, utenti, deploy applicativo) — stesso meccanismo, playbook diverso.
+
 ## Cosa NON fa il primo prototipo
 
 - Niente feedback loop (watch dal cluster → Bag) — viene dopo
