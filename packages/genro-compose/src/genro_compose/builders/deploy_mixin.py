@@ -16,7 +16,7 @@ Docs: https://docs.docker.com/reference/compose-file/deploy/
 
 from __future__ import annotations
 
-from genro_bag.builders import element
+from genro_builders.builder import element
 
 
 class DeployMixin:

@@ -3,19 +3,18 @@
 
 """TraefikApp - Application class for building Traefik v3 configurations.
 
-Follows the standard genro-bag App pattern:
-    1. Create a Bag with TraefikBuilder
-    2. Populate via recipe(root) — structure with optional ^ pointers to data
-    3. Compile to YAML with to_yaml()
+Extends BagAppBase with YAML rendering. BagAppBase handles:
+    - BuilderBag creation and lifecycle
+    - Component expansion (materialize)
+    - ^pointer resolution and reactive binding
+    - Auto-recompile on data changes
 
-The recipe defines the STRUCTURE (what routers, services, middlewares exist).
-The data Bag holds the VALUES (ports, hostnames, IPs, credentials).
-
-Attribute values starting with ^ are pointers to self.data paths.
-At compile time the compiler resolves them to actual values.
-
-If output is set, any change to self.data triggers recompile and save —
-making it a live control plane for Traefik (with file provider watch=True).
+TraefikApp adds:
+    - Root traefik node creation
+    - recipe(root) API for subclasses
+    - to_yaml() rendering via TraefikCompiler walk-to-dict + yaml.dump
+    - check() validation
+    - File output on data changes
 
 Example:
     from genro_traefik import TraefikApp
@@ -41,89 +40,59 @@ Example:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from genro_bag import Bag
+import yaml
+from genro_builders import BagAppBase
+
+if TYPE_CHECKING:
+    from genro_bag import Bag
 
 from .builders.traefik_builder import TraefikBuilder
-from .traefik_compiler import compile_to_dict
+from .traefik_compiler import TraefikCompiler
 
 
-class TraefikApp:
+class TraefikApp(BagAppBase):
     """Base class for Traefik v3 configuration applications.
 
     Subclass and override recipe(root) to define your configuration.
     Call to_yaml() to generate the YAML output.
     Call check() to validate the structure.
-
-    Args:
-        name: Root element name.
-        output: Optional file path. If set, every data change triggers
-            recompile and write to this path.
     """
 
-    def __init__(self, name: str = "traefik",
-                 output: str | Path | None = None) -> None:
-        self._store = Bag(builder=TraefikBuilder)
-        self._data: Bag = Bag()
-        self._store.builder.data = self._data
-        self._output = Path(output) if output else None
-        self._auto_compile = False
-        self._root = self._store.traefik(name=name)
-        self.recipe(self._root)
-        self._setup_data_trigger()
+    builder_class = TraefikBuilder
+    compiler_class = TraefikCompiler
 
-    @property
-    def store(self) -> Bag:
-        """The root Bag containing the configuration."""
-        return self._store
+    def __init__(self, name: str = "traefik",
+                 output: str | Path | None = None,
+                 data: Bag | dict[str, Any] | None = None) -> None:
+        self._name = name
+        self._file_output = Path(output) if output else None
+        super().__init__()
+        if data is not None:
+            self.data = data
+        self.setup()
 
     @property
     def root(self) -> Any:
-        """The traefik root BagNode (returned by traefik() element)."""
+        """The traefik root BagNode."""
         return self._root
 
     @property
-    def data(self) -> Bag:
-        """The data Bag. Values referenced by ^ pointers in the recipe."""
-        return self._data
-
-    @data.setter
-    def data(self, value: Bag | dict[str, Any]) -> None:
-        """Replace the data Bag. Accepts a Bag or dict."""
-        if isinstance(value, dict):
-            new_bag: Bag = Bag()
-            new_bag.fill_from(value)
-            self._data = new_bag
-        else:
-            self._data = value
-        self._store.builder.data = self._data
-        self._setup_data_trigger()
-        self._on_data_changed()
-
-    @property
-    def output(self) -> Path | None:
+    def file_output(self) -> Path | None:
         """The output file path for auto-save."""
-        return self._output
+        return self._file_output
 
-    @output.setter
-    def output(self, value: str | Path | None) -> None:
-        self._output = Path(value) if value else None
+    @file_output.setter
+    def file_output(self, value: str | Path | None) -> None:
+        self._file_output = Path(value) if value else None
 
-    def _setup_data_trigger(self) -> None:
-        """Subscribe to data changes for auto-compile."""
-        self._data.subscribe(
-            "traefik_app_auto_compile",
-            any=self._on_data_changed,
-        )
+    def setup(self) -> None:
+        """Create root node, run recipe, compile, enable auto-compile."""
+        self._root = self.store.traefik(name=self._name)
+        self.recipe(self._root)
+        self.compile()
         self._auto_compile = True
-
-    def _on_data_changed(self, *_args: Any, **_kwargs: Any) -> None:
-        """Callback on data change: recompile and save if output is set."""
-        if not self._auto_compile:
-            return
-        if self._output:
-            self.to_yaml(self._output)
 
     def recipe(self, root: Any) -> None:
         """Override to build your Traefik configuration.
@@ -132,35 +101,30 @@ class TraefikApp:
         Example: root.entryPoint(name="web", address="^web.address")
         """
 
-    def to_yaml(self, destination: str | Path | None = None) -> str:
-        """Compile the configuration to YAML, resolving ^ pointers.
-
-        Args:
-            destination: Optional file path. If provided, writes YAML
-                to the file and returns the YAML string.
-
-        Returns:
-            YAML string.
-        """
-        try:
-            import yaml
-        except ImportError as e:
-            msg = "PyYAML required: pip install pyyaml"
-            raise ImportError(msg) from e
-
-        yaml_dict = compile_to_dict(self._root, self._store.builder)
-
-        yaml_str = yaml.dump(
+    def render(self, compiled_bag: Bag) -> str:
+        """Render compiled Bag to YAML string via walk-to-dict."""
+        compiler = TraefikCompiler()
+        root_nodes = list(compiled_bag)
+        if not root_nodes:
+            return ""
+        yaml_dict = compiler.compile_to_dict(root_nodes[0], self.store.builder)
+        return yaml.dump(
             yaml_dict,
             default_flow_style=False,
             sort_keys=False,
             allow_unicode=True,
         )
 
-        dest = destination or self._output
+    def to_yaml(self, destination: str | Path | None = None) -> str:
+        """Compile to YAML and optionally write to file.
+
+        Returns:
+            YAML string.
+        """
+        yaml_str = self.output or ""
+        dest = destination or self._file_output
         if dest:
             Path(dest).write_text(yaml_str, encoding="utf-8")
-
         return yaml_str
 
     def check(self) -> list[str]:
@@ -174,10 +138,16 @@ class TraefikApp:
             if hasattr(self._root, "value") and self._root.value
             else self._root
         )
-        results = self._store.builder.check(check_target)
+        results = self.store.builder.check(check_target)
         errors: list[str] = []
         for path, _node, reasons in results:
             for reason in reasons:
                 errors.append(f"{path}: {reason}")
-
         return errors
+
+    def _on_node_updated(self, node: Any) -> None:
+        """Called by BindingManager when a bound node is updated."""
+        if self._auto_compile:
+            self._rerender()
+            if self._file_output:
+                self.to_yaml()

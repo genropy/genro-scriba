@@ -17,8 +17,8 @@ Docs: https://docs.docker.com/reference/compose-file/
 
 from __future__ import annotations
 
-from genro_bag import BagBuilderBase
-from genro_bag.builders import element
+from genro_builders import BagBuilderBase
+from genro_builders.builder import element
 
 from .build_mixin import BuildMixin
 from .deploy_mixin import DeployMixin

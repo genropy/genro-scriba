@@ -37,7 +37,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "genro-bag>=0.1.0",
+    "genro-bag>=0.9.0",
+    "genro-builders>=0.2.0",
     "genro-scriba>=0.1.0",
     "pyyaml>=6.0",
 ]
@@ -73,7 +74,15 @@ packages = ["genro_compose"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["genro_bag", "genro_bag.*", "yaml"]
+module = [
+    "genro_bag",
+    "genro_bag.*",
+    "genro_builders",
+    "genro_builders.*",
+    "genro_scriba",
+    "genro_scriba.*",
+    "yaml",
+]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

@@ -11,7 +11,7 @@ Docs: https://docs.docker.com/reference/compose-file/
 
 from __future__ import annotations
 
-from genro_bag.builders import element
+from genro_builders.builder import element
 
 from ..compose_compiler import render_attrs
 

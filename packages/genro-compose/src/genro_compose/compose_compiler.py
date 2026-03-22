@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from genro_scriba.compiler_base import CompilerBase
+from genro_scriba.yaml_compiler import YamlCompilerBase
 
 
-class ComposeCompiler(CompilerBase):
+class ComposeCompiler(YamlCompilerBase):
     """Compiler for ComposeBuilder — flat attribute rendering."""
 
 

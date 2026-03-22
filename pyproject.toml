@@ -124,5 +124,15 @@ packages = ["genro_scriba"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["genro_bag", "genro_bag.*", "yaml"]
+module = [
+    "genro_bag",
+    "genro_bag.*",
+    "genro_builders",
+    "genro_builders.*",
+    "genro_traefik",
+    "genro_traefik.*",
+    "genro_compose",
+    "genro_compose.*",
+    "yaml",
+]
 ignore_missing_imports = true

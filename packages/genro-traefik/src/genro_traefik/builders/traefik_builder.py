@@ -16,8 +16,8 @@ Naming:
 
 from __future__ import annotations
 
-from genro_bag import BagBuilderBase
-from genro_bag.builders import element
+from genro_builders import BagBuilderBase
+from genro_builders.builder import element
 
 from ..traefik_compiler import render_attrs
 

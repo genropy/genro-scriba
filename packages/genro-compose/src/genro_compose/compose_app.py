@@ -3,6 +3,12 @@
 
 """ComposeApp - Application class for building Docker Compose configurations.
 
+Extends BagAppBase with YAML rendering. BagAppBase handles:
+    - BuilderBag creation and lifecycle
+    - Component expansion (materialize)
+    - ^pointer resolution and reactive binding
+    - Auto-recompile on data changes
+
 Example:
     from genro_compose import ComposeApp
 
@@ -18,36 +24,37 @@ Example:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from genro_bag import Bag
+import yaml
+from genro_builders import BagAppBase
+
+if TYPE_CHECKING:
+    from genro_bag import Bag
 
 from .builders.compose_builder import ComposeBuilder
-from .compose_compiler import compile_to_dict
+from .compose_compiler import ComposeCompiler
 
 
-class ComposeApp:
+class ComposeApp(BagAppBase):
     """Docker Compose configuration application.
 
     Subclass and override recipe(root) to define your stack.
     Call to_yaml() to generate the YAML output.
     """
 
-    def __init__(self, name: str = "compose",
-                 output: str | Path | None = None) -> None:
-        self._store = Bag(builder=ComposeBuilder)
-        self._data: Bag = Bag()
-        self._store.builder.data = self._data
-        self._output = Path(output) if output else None
-        self._auto_compile = False
-        self._root = self._store.compose(name=name)
-        self.recipe(self._root)
-        self._setup_data_trigger()
+    builder_class = ComposeBuilder
+    compiler_class = ComposeCompiler
 
-    @property
-    def store(self) -> Bag:
-        """The root Bag containing the configuration."""
-        return self._store
+    def __init__(self, name: str = "compose",
+                 output: str | Path | None = None,
+                 data: Bag | dict[str, Any] | None = None) -> None:
+        self._name = name
+        self._file_output = Path(output) if output else None
+        super().__init__()
+        if data is not None:
+            self.data = data
+        self.setup()
 
     @property
     def root(self) -> Any:
@@ -55,75 +62,48 @@ class ComposeApp:
         return self._root
 
     @property
-    def data(self) -> Bag:
-        """The data Bag. Values referenced by ^ pointers in the recipe."""
-        return self._data
-
-    @data.setter
-    def data(self, value: Bag | dict[str, Any]) -> None:
-        """Replace the data Bag. Accepts a Bag or dict."""
-        if isinstance(value, dict):
-            new_bag: Bag = Bag()
-            new_bag.fill_from(value)
-            self._data = new_bag
-        else:
-            self._data = value
-        self._store.builder.data = self._data
-        self._setup_data_trigger()
-        self._on_data_changed()
-
-    @property
-    def output(self) -> Path | None:
+    def file_output(self) -> Path | None:
         """The output file path for auto-save."""
-        return self._output
+        return self._file_output
 
-    @output.setter
-    def output(self, value: str | Path | None) -> None:
-        self._output = Path(value) if value else None
+    @file_output.setter
+    def file_output(self, value: str | Path | None) -> None:
+        self._file_output = Path(value) if value else None
 
-    def _setup_data_trigger(self) -> None:
-        """Subscribe to data changes for auto-compile."""
-        self._data.subscribe(
-            "compose_auto_compile",
-            any=self._on_data_changed,
-        )
+    def setup(self) -> None:
+        """Create root node, run recipe, compile, enable auto-compile."""
+        self._root = self.store.compose(name=self._name)
+        self.recipe(self._root)
+        self.compile()
         self._auto_compile = True
-
-    def _on_data_changed(self, *_args: Any, **_kwargs: Any) -> None:
-        """Callback on data change: recompile and save if output is set."""
-        if not self._auto_compile:
-            return
-        if self._output:
-            self.to_yaml(self._output)
 
     def recipe(self, root: Any) -> None:
         """Override to build your Docker Compose configuration."""
 
-    def to_yaml(self, destination: str | Path | None = None) -> str:
-        """Compile the configuration to YAML.
-
-        Returns:
-            YAML string.
-        """
-        try:
-            import yaml
-        except ImportError as e:
-            msg = "PyYAML required: pip install pyyaml"
-            raise ImportError(msg) from e
-
-        yaml_dict = compile_to_dict(self._root, self._store.builder)
-
-        yaml_str = yaml.dump(
+    def render(self, compiled_bag: Bag) -> str:
+        """Render compiled Bag to YAML string via walk-to-dict."""
+        compiler = ComposeCompiler()
+        root_nodes = list(compiled_bag)
+        if not root_nodes:
+            return ""
+        yaml_dict = compiler.compile_to_dict(root_nodes[0], self.store.builder)
+        return yaml.dump(
             yaml_dict,
             default_flow_style=False,
             sort_keys=False,
             allow_unicode=True,
         )
 
-        dest = destination or self._output
+    def to_yaml(self, destination: str | Path | None = None) -> str:
+        """Compile to YAML and optionally write to file.
+
+        Returns:
+            YAML string.
+        """
+        yaml_str = self.output or ""
+        dest = destination or self._file_output
         if dest:
             Path(dest).write_text(yaml_str, encoding="utf-8")
-
         return yaml_str
 
     def check(self) -> list[str]:
@@ -137,9 +117,16 @@ class ComposeApp:
             if hasattr(self._root, "value") and self._root.value
             else self._root
         )
-        results = self._store.builder.check(check_target)
+        results = self.store.builder.check(check_target)
         errors: list[str] = []
         for path, _node, reasons in results:
             for reason in reasons:
                 errors.append(f"{path}: {reason}")
         return errors
+
+    def _on_node_updated(self, node: Any) -> None:
+        """Called by BindingManager when a bound node is updated."""
+        if self._auto_compile:
+            self._rerender()
+            if self._file_output:
+                self.to_yaml()

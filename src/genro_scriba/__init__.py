@@ -14,6 +14,8 @@ Install individual builders or everything:
 __version__ = "0.1.0"
 
 from .app import ScribaApp
-from .compiler_base import CompilerBase
+from .yaml_compiler import YamlCompilerBase
 
-__all__ = ["CompilerBase", "ScribaApp", "__version__"]
+CompilerBase = YamlCompilerBase
+
+__all__ = ["CompilerBase", "ScribaApp", "YamlCompilerBase", "__version__"]

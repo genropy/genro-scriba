@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from genro_scriba.compiler_base import CompilerBase
+from genro_scriba.yaml_compiler import YamlCompilerBase
 
 
-class TraefikCompiler(CompilerBase):
+class TraefikCompiler(YamlCompilerBase):
     """Compiler for TraefikBuilder — nests underscored attributes."""
 
     def _render_attr_entry(self, attr_name: str, resolved: Any,
