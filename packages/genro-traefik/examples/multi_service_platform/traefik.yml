@@ -1,0 +1,140 @@
+entryPoints:
+  web:
+    address: :80
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    address: :443
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: infra@myplatform.io
+      storage: /etc/traefik/acme.json
+      httpChallenge:
+        entryPoint: web
+log:
+  level: INFO
+  format: json
+accessLog:
+  format: json
+  bufferingSize: 100
+http:
+  middlewares:
+    security-headers:
+      headers:
+        stsSeconds: 63072000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: true
+        referrerPolicy: strict-origin-when-cross-origin
+    compress-resp:
+      compress:
+        minResponseBodyBytes: 1024
+    ip-whitelist:
+      ipAllowList:
+        sourceRange:
+        - 192.168.1.0/24
+        - 10.10.0.0/16
+    rate-api:
+      rateLimit:
+        average: 200
+        burst: 50
+        period: 1m
+    auth-admin:
+      forwardAuth:
+        address: http://auth-service:4181/verify
+        trustForwardHeader: true
+        authResponseHeaders:
+        - X-Auth-User
+        - X-Auth-Role
+  routers:
+    api-router:
+      rule: Host(`api.myplatform.io`)
+      service: api-svc
+      entryPoints:
+      - websecure
+      middlewares:
+      - security-headers
+      - compress-resp
+      - rate-api
+      tls:
+        certResolver: letsencrypt
+    web-router:
+      rule: Host(`web.myplatform.io`)
+      service: web-svc
+      entryPoints:
+      - websecure
+      middlewares:
+      - security-headers
+      - compress-resp
+      tls:
+        certResolver: letsencrypt
+    admin-router:
+      rule: Host(`admin.myplatform.io`)
+      service: admin-svc
+      entryPoints:
+      - websecure
+      middlewares:
+      - security-headers
+      - compress-resp
+      - ip-whitelist
+      - auth-admin
+      tls:
+        certResolver: letsencrypt
+    ws-router:
+      rule: Host(`ws.myplatform.io`)
+      service: ws-svc
+      entryPoints:
+      - websecure
+      middlewares:
+      - security-headers
+      - compress-resp
+      tls:
+        certResolver: letsencrypt
+  services:
+    api-svc:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+        - url: http://10.0.1.10:8000
+        - url: http://10.0.1.11:8000
+        - url: http://10.0.1.12:8000
+        healthCheck:
+          path: /healthz
+          interval: 10s
+          timeout: 3s
+    web-svc:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+        - url: http://10.0.2.10:3000
+        - url: http://10.0.2.11:3000
+        healthCheck:
+          path: /
+          interval: 10s
+          timeout: 3s
+    admin-svc:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+        - url: http://10.0.3.10:9000
+        healthCheck:
+          path: /health
+          interval: 10s
+          timeout: 3s
+    ws-svc:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+        - url: http://10.0.4.10:8080
+        - url: http://10.0.4.11:8080
+        healthCheck:
+          path: /ping
+          interval: 10s
+          timeout: 3s

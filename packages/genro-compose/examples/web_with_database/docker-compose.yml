@@ -1,0 +1,55 @@
+services:
+  proxy:
+    image: nginx:alpine
+    restart: always
+    ports:
+    - 80:80
+    - 443:443
+    volumes:
+    - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      api:
+        condition: service_healthy
+  api:
+    image: myapp-api:latest
+    restart: unless-stopped
+    ports:
+    - 8080:8080
+    environment:
+      DATABASE_URL: postgresql://app:s3cret!@db:5432/myapp
+      REDIS_URL: redis://cache:6379/0
+    build:
+      context: .
+      target: production
+    healthcheck:
+      test: curl -f http://localhost:8080/health
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: s3cret!
+    volumes:
+    - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: pg_isready -U app -d myapp
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  cache:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+    - redisdata:/data
+volumes:
+  pgdata: null
+  redisdata: null

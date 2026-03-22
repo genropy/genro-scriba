@@ -1,0 +1,128 @@
+# Copyright 2025 Softwell S.r.l. - Licensed under Apache License 2.0
+# See LICENSE file for details
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "genro-scriba"
+version = "0.1.0"
+description = "Infrastructure configuration file generator for Genropy - Traefik, Docker Compose, and more"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [
+    { name = "Genropy Team", email = "info@genropy.org" }
+]
+keywords = [
+    "genropy",
+    "infrastructure",
+    "configuration",
+    "yaml",
+    "traefik",
+    "docker-compose",
+    "code-generation",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Networking",
+    "Typing :: Typed",
+]
+dependencies = [
+    "genro-traefik>=0.1.0",
+    "genro-compose>=0.1.0",
+]
+
+[project.optional-dependencies]
+traefik = ["genro-traefik>=0.1.0"]
+compose = ["genro-compose>=0.1.0"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-sugar>=0.9",
+    "mypy>=1.0",
+    "ruff>=0.1.0",
+]
+docs = [
+    "sphinx>=8.0.0",
+    "sphinx-rtd-theme>=3.0.0",
+    "sphinx-autodoc-typehints>=3.0.0",
+    "myst-parser>=4.0.0",
+    "sphinxcontrib-mermaid>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/genropy/genro-scriba"
+Documentation = "https://genro-scriba.readthedocs.io"
+Repository = "https://github.com/genropy/genro-scriba"
+Issues = "https://github.com/genropy/genro-scriba/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/genro_scriba"]
+
+# Shared dev tool configs for the monorepo
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["packages/*/src", "packages/*/tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "N", "UP", "B", "C4", "T10",
+    "ISC", "PIE", "PT", "RSE", "RET", "SIM", "TCH",
+    "ARG", "PL", "RUF",
+]
+ignore = [
+    "PLR0913",
+    "PLR2004",
+    "PIE790",
+    "ARG001",
+    "ARG002",
+    "PLC0415",
+    "PLR0911",
+    "N802",
+    "N803",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"packages/genro-traefik/src/genro_traefik/builders/traefik_builder.py" = ["E501"]
+"packages/genro-compose/src/genro_compose/builders/compose_builder.py" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["genro_scriba"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --cov=genro_scriba --cov-report=term-missing --cov-report=xml"
+
+[tool.coverage.run]
+source = ["src/genro_scriba"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+packages = ["genro_scriba"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["genro_bag", "genro_bag.*", "yaml"]
+ignore_missing_imports = true
