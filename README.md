@@ -3,30 +3,37 @@
 [![Python versions](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-yellow.svg)](https://opensource.org/licenses/Apache-2.0)
 
-**Infrastructure configuration file generator for Genropy.** Write Traefik, Docker Compose, and other infrastructure configs as Python programs instead of YAML files.
+**Infrastructure as Python.** Write Traefik, Docker Compose, Kubernetes, and Ansible configs as Python programs instead of YAML files. Then apply them to live systems with genro-juggler.
 
 ## Why?
 
 YAML is great until you have 5 services, 3 environments, and shared conventions. Then it becomes copy-paste with manual coordination. genro-scriba lets you use Python — loops, conditionals, parameters, shared data — to generate validated configuration files.
 
+## Packages
+
+| Package | Description | Tests | Status |
+| ------- | ----------- | ----- | ------ |
+| [genro-scriba](src/genro_scriba/) | ScribaApp core, YamlCompiler, ArtifactHub | 27 | Alpha |
+| [genro-traefik](packages/genro-traefik/) | Traefik v3 reverse proxy (~150 @element, 3 @component) | 169 | Alpha |
+| [genro-compose](packages/genro-compose/) | Docker Compose stacks (~15 @element, 2 @component) | 36 | Alpha |
+| [genro-kubernetes](packages/genro-kubernetes/) | Kubernetes manifests (20 @element + importers) | 42 | Alpha |
+| [genro-ansible](packages/genro-ansible/) | Ansible playbooks (5 @element, args_* flat params) | 22 | Alpha |
+| [genro-juggler](packages/genro-juggler/) | Reactive infrastructure bus (targets + CLI/REPL) | 39 | Alpha |
+
+**335 tests total.**
+
+Each package works independently. The `genro-scriba` meta-package installs everything.
+
 ## Installation
 
 ```bash
 pip install genro-scriba              # everything
-pip install genro-scriba[traefik]     # only Traefik
-pip install genro-scriba[compose]     # only Docker Compose
-pip install genro-traefik             # standalone
-pip install genro-compose             # standalone
+pip install genro-traefik             # standalone Traefik builder
+pip install genro-compose             # standalone Compose builder
+pip install genro-kubernetes          # standalone Kubernetes builder
+pip install genro-ansible             # standalone Ansible builder
+pip install genro-juggler             # reactive bus with targets
 ```
-
-## Packages
-
-| Package | Description | Status |
-|---------|-------------|--------|
-| [genro-traefik](packages/genro-traefik/) | Traefik v3 reverse proxy configuration | Alpha |
-| [genro-compose](packages/genro-compose/) | Docker Compose stack configuration | Alpha |
-
-Each package works independently. The `genro-scriba` meta-package installs everything.
 
 ---
 
@@ -69,8 +76,6 @@ proxy = MyProxy()
 proxy.to_yaml("traefik.yml")
 ```
 
-**Python advantage**: Generate routers and services in a loop for N microservices, share middleware stacks with variables, use conditionals for dev/prod differences.
-
 ---
 
 ## Docker Compose — Stack Configuration
@@ -85,14 +90,11 @@ class MyStack(ComposeApp):
         super().__init__()
 
     def recipe(self, root):
-        # Web frontend
         root.service(
             name="web", image="nginx:alpine", restart="always",
             ports=["80:80", "443:443"],
-            volumes=["./nginx.conf:/etc/nginx/nginx.conf:ro"],
             depends_on=["api"])
 
-        # API backend with health check and deploy config
         api = root.service(
             name="api", image="myapp:latest",
             restart="unless-stopped",
@@ -101,7 +103,6 @@ class MyStack(ComposeApp):
                 "DATABASE_URL": f"postgresql://app:{self._db_password}@db:5432/myapp",
                 "REDIS_URL": "redis://cache:6379/0",
             })
-        api.build_config(context=".", target="production")
         api.healthcheck(test="curl -f http://localhost:8080/health",
                         interval="10s", timeout="3s", retries=3)
         api.depends_on_condition(service="db", condition="service_healthy")
@@ -109,7 +110,6 @@ class MyStack(ComposeApp):
         if self._replicas > 1:
             api.deploy(replicas=self._replicas)
 
-        # PostgreSQL with health check
         db = root.service(
             name="db", image="postgres:16-alpine", restart="always",
             environment={
@@ -120,27 +120,156 @@ class MyStack(ComposeApp):
         db.healthcheck(test="pg_isready -U postgres",
                        interval="10s", retries=5)
 
-        # Redis cache
         root.service(
             name="cache", image="redis:7-alpine", restart="always",
             volumes=["redisdata:/data"])
 
-        # Persistent volumes
         root.volume(name="pgdata")
         root.volume(name="redisdata")
 
-# Production: 3 API replicas
 stack = MyStack(db_password="s3cret!", replicas=3)
 stack.to_yaml("docker-compose.yml")
 ```
 
-**Python advantage**: Database password defined once and used in API connection string and DB config. Replicas controlled by a parameter. Health check ensures startup order.
+---
+
+## Kubernetes — Manifest Generation
+
+```python
+from genro_kubernetes import KubernetesApp
+
+class MyCluster(KubernetesApp):
+    def recipe(self, root):
+        # Secret for database credentials
+        root.secret(name="db-creds",
+                    data={"username": "admin", "password": "s3cret"})
+
+        # Deployment with environment from secret
+        dep = root.deployment(name="api", image="myapp:v1", replicas=3)
+        c = dep.container(name="api", image="myapp:v1")
+        c.port(container_port=8080)
+        c.env_var(name="DB_PASSWORD",
+                  value_from_secret="db-creds", secret_key="password")
+        c.resources(cpu_request="100m", memory_request="128Mi",
+                    cpu_limit="500m", memory_limit="512Mi")
+        c.liveness_probe(path="/health", port=8080, period=10)
+
+        # Service
+        svc = root.service(name="api")
+        svc.service_port(port=80, target_port=8080)
+
+        # Ingress with TLS
+        ing = root.ingress(name="api-ingress")
+        ing.ingress_rule(host="api.example.com", path="/",
+                         service_name="api", service_port=80)
+        ing.ingress_tls(hosts=["api.example.com"],
+                        secret_name="api-tls")
+
+app = MyCluster()
+app.to_yaml("manifests.yaml")
+```
+
+Also imports existing manifests back to Python:
+
+```python
+from genro_kubernetes.recipe_from_manifest import recipe_from_manifest
+
+code = recipe_from_manifest("existing-deployment.yaml")
+print(code)  # → Python recipe that reproduces the YAML
+```
+
+---
+
+## Ansible — Playbook Generation
+
+```python
+from genro_ansible import AnsibleApp
+
+class ServerSetup(AnsibleApp):
+    def recipe(self, root):
+        play = root.play(name="Setup web servers",
+                         hosts="web", become=True)
+        play.task(name="Install Docker", module="apt",
+                  args_name="docker.io", args_state="present")
+        play.task(name="Start Docker", module="systemd",
+                  args_name="docker", args_state="started",
+                  args_enabled=True)
+        play.task(name="Deploy config", module="template",
+                  args_src="app.conf.j2",
+                  args_dest="/etc/app/config.yml")
+
+app = ServerSetup()
+app.to_yaml("playbook.yml")
+```
+
+The `$` prefix maps to Ansible `{{ }}` variables: `args_dest="$deploy_dir/config.yml"` becomes `dest: "{{ deploy_dir }}/config.yml"`.
+
+---
+
+## Juggler — Reactive Infrastructure Bus
+
+genro-juggler connects builders to live targets. When data changes, affected slots recompile and apply automatically.
+
+```python
+from genro_juggler import JugglerApp
+from genro_juggler.targets import K8sTarget, MockK8sTarget
+
+class MyInfra(JugglerApp):
+    def kubernetes_recipe(self, root):
+        dep = root.deployment(name="api", image="^api.image", replicas=2)
+        c = dep.container(name="api", image="^api.image")
+        c.port(container_port=8080)
+
+        svc = root.service(name="api")
+        svc.service_port(port=80, target_port=8080)
+
+    def ansible_recipe(self, root):
+        play = root.play(name="Setup", hosts="all", become=True)
+        play.task(name="Install Docker", module="apt",
+                  args_name="docker.io", args_state="present")
+
+# With mock target (testing)
+app = MyInfra(
+    targets={"kubernetes": MockK8sTarget()},
+    data={"api.image": "myapp:v1"},
+)
+# [MockK8s] APPLY  Deployment/default/api → applied
+# [MockK8s] APPLY  Service/default/api → applied
+
+# Reactive: change data → automatic reapply
+app.data["api.image"] = "myapp:v2"
+# [MockK8s] APPLY  Deployment/default/api → applied
+# [MockK8s] APPLY  Service/default/api → applied
+
+# With real target (production)
+# app = MyInfra(targets={"kubernetes": K8sTarget()}, data={...})
+```
+
+### Targets
+
+| Target | Description |
+| ------ | ----------- |
+| `K8sTarget` | Server-side apply to Kubernetes cluster via dynamic client |
+| `AnsibleTarget` | Execute playbooks via ansible-runner |
+| `FileTarget` | Write YAML files to disk |
+| `MockK8sTarget` | In-memory K8s mock with logging (testing) |
+| `MockAnsibleTarget` | In-memory Ansible mock with logging (testing) |
+
+### CLI
+
+```bash
+juggler run infra.py          # start app with remote server
+juggler list                  # list running apps
+juggler connect myinfra       # REPL with /status, /slots, /yaml
+juggler yaml infra.py         # dry-run: print YAML without applying
+juggler stop myinfra          # stop remote app
+```
 
 ---
 
 ## ScribaApp — Unified Infrastructure with Shared Data
 
-The real power: **one Python program generates both `traefik.yml` and `docker-compose.yml`** with shared data.
+One Python program generates multiple config files with shared data and selective recompile.
 
 ```python
 from genro_scriba import ScribaApp
@@ -166,51 +295,27 @@ class MyInfra(ScribaApp):
             volumes=["pgdata:/var/lib/postgresql/data"])
         root.volume(name="pgdata")
 
-# Create infrastructure with auto-save
 infra = MyInfra(
-    traefik_output="/etc/traefik/traefik.yml",
+    traefik_output="traefik.yml",
     compose_output="docker-compose.yml",
 )
 
-# Set shared data — files are written automatically
 infra.data["web.port"] = ":80"
 infra.data["api.rule"] = "Host(`api.example.com`)"
 infra.data["api.backend"] = "http://api:8080"
 infra.data["api.port"] = "8080:8080"
 infra.data["db.url"] = "postgresql://app:secret@db:5432/myapp"
 infra.data["db.password"] = "secret"
-```
 
-### Selective Recompile
-
-ScribaApp tracks which `^pointers` each builder uses. When you change a value, **only the affected builder recompiles**:
-
-```python
-infra.data["db.password"] = "new_secret"
-# → only docker-compose.yml is regenerated (Traefik doesn't use db.password)
-
-infra.data["web.port"] = ":8080"
-# → only traefik.yml is regenerated (Compose doesn't use web.port)
-```
-
-### Live Configuration
-
-Combined with Traefik's file provider (`watch: true`), ScribaApp becomes a **live control plane**:
-
-```python
-# Traefik watches for file changes, picks up new config automatically
-infra = MyInfra(traefik_output="/etc/traefik/dynamic.yml")
-
-# Later, in your application:
-infra.data["api.backend"] = "http://new-server:8080"
-# → traefik.yml is regenerated → Traefik reloads automatically
+# Change db.password → only docker-compose.yml is regenerated
+# Change web.port → only traefik.yml is regenerated
 ```
 
 ---
 
 ## The Builder IS the Documentation
 
-Every `@element` has an encyclopedic docstring that teaches the underlying tool. Reading the builder is a tutorial:
+Every `@element` has an encyclopedic docstring that teaches the underlying tool:
 
 ```python
 # In your IDE, hover over any method to learn:
@@ -227,11 +332,14 @@ svc.healthcheck(
 
 ```
 genro-scriba/
-├── src/genro_scriba/          # ScribaApp (unified, shared data)
+├── src/genro_scriba/              # ScribaApp core, YamlCompiler, ArtifactHub
 ├── packages/
-│   ├── genro-traefik/         # TraefikApp + TraefikBuilder (standalone)
-│   └── genro-compose/         # ComposeApp + ComposeBuilder (standalone)
-├── pyproject.toml             # meta-package
+│   ├── genro-traefik/             # TraefikApp + TraefikBuilder
+│   ├── genro-compose/             # ComposeApp + ComposeBuilder
+│   ├── genro-kubernetes/          # KubernetesApp + KubernetesBuilder + importers
+│   ├── genro-ansible/             # AnsibleApp + AnsibleBuilder
+│   └── genro-juggler/             # JugglerApp + targets + CLI/REPL
+├── pyproject.toml                 # meta-package
 └── README.md
 ```
 
