@@ -3,8 +3,10 @@
 
 from .base import TargetBase
 from .file_target import FileTarget
+from .mock_ansible import MockAnsibleTarget
+from .mock_kubernetes import MockK8sTarget
 
-__all__ = ["FileTarget", "TargetBase"]
+__all__ = ["FileTarget", "MockAnsibleTarget", "MockK8sTarget", "TargetBase"]
 
 # Conditional imports for optional targets
 try:
