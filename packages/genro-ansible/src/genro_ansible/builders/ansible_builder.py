@@ -107,7 +107,7 @@ class AnsibleBuilder(BagBuilderBase):
             handlers: list[dict[str, Any]] = []
 
             for child in node_value:
-                tag = child.tag or child.label
+                tag = child.node_tag or child.label
                 if tag == "task":
                     tasks.append(_render_task(child))
                 elif tag == "handler":

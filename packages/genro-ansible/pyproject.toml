@@ -38,8 +38,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "genro-bag>=0.9.0",
-    "genro-builders>=0.2.0",
+    "genro-bag>=0.11.0",
+    "genro-builders>=0.3.1",
     "genro-scriba>=0.1.0",
     "pyyaml>=6.0",
 ]

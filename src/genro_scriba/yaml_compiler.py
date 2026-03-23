@@ -49,7 +49,7 @@ class YamlCompilerBase(BagCompilerBase):
         """Walk a Bag and compile each child node."""
         result: dict[str, Any] = {}
         for node in bag:
-            tag = node.tag or node.label
+            tag = node.node_tag or node.label
             method = self._get_compile_method(builder, tag)
             if method:
                 method(node, result)
@@ -60,7 +60,7 @@ class YamlCompilerBase(BagCompilerBase):
     def compile_default(self, node: Any, result: dict[str, Any],
                         builder: Any) -> None:
         """Default: use tag as YAML key, dump attrs + children."""
-        tag = node.tag or node.label
+        tag = node.node_tag or node.label
         content = self.render_attrs(node, builder)
         result[tag] = content
 
