@@ -66,6 +66,35 @@ class DashboardUI(TextualApp):
 
         page.footer()
 
+    def setup(self) -> None:
+        """Override setup to install DataTable event handler on LiveApp."""
+        super().setup()
+        if self._live_app is not None:
+            ui = self
+
+            def on_data_table_row_selected(event: Any) -> None:
+                ui._on_row_selected(event)
+
+            self._live_app.on_data_table_row_selected = on_data_table_row_selected
+
+    def _on_row_selected(self, event: Any) -> None:
+        """Handle DataTable row selection — write to hub.selected path."""
+        table_id = getattr(event.data_table, "id", "")
+        if table_id != "hub_results":
+            return
+        row_key = event.row_key
+        table = event.data_table
+        row_data = table.get_row(row_key)
+        if not row_data:
+            return
+        # row_data = [name, repo, version, stars, description]
+        chart_info = {
+            "name": row_data[0],
+            "repo": row_data[1],
+            "version": row_data[2],
+        }
+        self._dashboard.select_chart(chart_info)
+
     def action_refresh(self) -> None:
         """Refresh the resource tree."""
         self._dashboard.refresh_tree()

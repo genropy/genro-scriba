@@ -23,6 +23,7 @@ ArtifactHub: search Helm charts and display details in the dashboard.
 from __future__ import annotations
 
 import sys
+import threading
 import traceback
 from typing import TYPE_CHECKING, Any
 
@@ -146,6 +147,48 @@ class JugglerDashboard:
             live_app.call_from_thread(fn, *args)
         else:
             fn(*args)
+
+    def select_chart(self, chart_info: dict[str, str]) -> None:
+        """Select a chart from search results — load detail in background."""
+        repo = chart_info.get("repo", "")
+        name = chart_info.get("name", "")
+        if not repo or not name:
+            return
+        self._ui.update_hub_detail(f"Loading {repo}/{name}...")
+        thread = threading.Thread(
+            target=self._load_chart_detail, args=(repo, name), daemon=True,
+        )
+        thread.start()
+
+    def _load_chart_detail(self, repo: str, name: str) -> None:
+        """Load chart detail from ArtifactHub (runs in background thread)."""
+        try:
+            detail = self._hub.chart_detail(repo, name)
+            lines = [
+                f"[bold]{detail.get('name', name)}[/] v{detail.get('version', '?')}",
+                f"[dim]{detail.get('description', '')}[/]",
+                "",
+                f"app_version: [green]{detail.get('app_version', '?')}[/]",
+                f"repo: [cyan]{repo}[/]",
+            ]
+            images = detail.get("containers_images", [])
+            if images:
+                lines.append("")
+                lines.append("[bold]Images:[/]")
+                for img in images:
+                    if isinstance(img, dict):
+                        lines.append(f"  [green]{img.get('image', '')}[/]")
+                    else:
+                        lines.append(f"  [green]{img}[/]")
+            install = detail.get("install", "")
+            if install:
+                lines.append("")
+                lines.append(f"[dim]{install}[/]")
+            rich_text = "\n".join(lines)
+            self._call_on_main(self._ui.update_hub_detail, rich_text)
+        except Exception as e:
+            self._handle_error("chart_detail", e)
+            self._call_on_main(self._ui.update_hub_detail, f"Error: {e}")
 
     def get_search_results(self) -> list[dict[str, Any]]:
         """Return last ArtifactHub search results (for testing)."""
