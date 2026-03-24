@@ -425,3 +425,100 @@ class TestDashboardRemote:
 
         assert dashboard._remote is None
         assert dashboard._name == ""
+
+
+# =========================================================================
+# JugglerDashboard: Auto Live + Log (Phase 4)
+# =========================================================================
+
+
+class TestAutoLiveAndLog:
+
+    def test_auto_live_default_off(self) -> None:
+        app = SimpleK8sInfra(data={"api.image": "myapp:v1"})
+        dashboard = JugglerDashboard(app)
+        assert not dashboard._auto_live
+
+    def test_set_auto_live_on(self) -> None:
+        app = SimpleK8sInfra(data={"api.image": "myapp:v1"})
+        dashboard = JugglerDashboard(app)
+        dashboard.set_auto_live(True)
+        assert dashboard._auto_live
+
+    def test_set_auto_live_off(self) -> None:
+        app = SimpleK8sInfra(data={"api.image": "myapp:v1"})
+        dashboard = JugglerDashboard(app)
+        dashboard.set_auto_live(True)
+        dashboard.set_auto_live(False)
+        assert not dashboard._auto_live
+
+    def test_go_live_applies_all_slots(self) -> None:
+        """go_live() calls apply_all() on the JugglerApp."""
+        mock = MockK8sTarget(verbose=False)
+        app = SimpleK8sInfra(
+            targets={"kubernetes": mock},
+            data={"api.image": "myapp:v1"},
+        )
+        initial_log = len(mock.get_log())
+
+        dashboard = JugglerDashboard(app)
+        dashboard.go_live()
+
+        assert len(mock.get_log()) > initial_log
+
+    def test_go_live_returns_results_in_tree(self) -> None:
+        """After go_live(), tree data still reflects resources."""
+        mock = MockK8sTarget(verbose=False)
+        app = SimpleK8sInfra(
+            targets={"kubernetes": mock},
+            data={"api.image": "myapp:v1"},
+        )
+        dashboard = JugglerDashboard(app)
+        dashboard.go_live()
+
+        tree_data = dashboard.get_tree_data()
+        assert len(tree_data) >= 1
+
+    def test_auto_live_triggers_apply_on_data_change(self) -> None:
+        """With auto_live ON, data changes trigger apply_all."""
+        mock = MockK8sTarget(verbose=False)
+        app = SimpleK8sInfra(
+            targets={"kubernetes": mock},
+            data={"api.image": "myapp:v1"},
+        )
+        dashboard = JugglerDashboard(app)
+        dashboard._subscribe()
+        dashboard._auto_live = True
+
+        log_before = len(mock.get_log())
+
+        # _on_data_changed_sync simulates what happens on data change
+        dashboard._on_data_changed_sync()
+
+        assert len(mock.get_log()) > log_before
+
+    def test_auto_live_off_no_apply_on_sync(self) -> None:
+        """With auto_live OFF, _on_data_changed_sync does NOT apply."""
+        mock = MockK8sTarget(verbose=False)
+        app = SimpleK8sInfra(
+            targets={"kubernetes": mock},
+            data={"api.image": "myapp:v1"},
+        )
+        dashboard = JugglerDashboard(app)
+        dashboard._subscribe()
+
+        log_before = len(mock.get_log())
+
+        dashboard._on_data_changed_sync()
+
+        # No new apply — log unchanged
+        assert len(mock.get_log()) == log_before
+
+    def test_go_live_without_targets(self) -> None:
+        """go_live() works even without targets (no crash)."""
+        app = SimpleK8sInfra(data={"api.image": "myapp:v1"})
+        dashboard = JugglerDashboard(app)
+        dashboard.go_live()  # should not raise
+
+        tree_data = dashboard.get_tree_data()
+        assert len(tree_data) >= 1

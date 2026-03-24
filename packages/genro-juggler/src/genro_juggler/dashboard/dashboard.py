@@ -50,6 +50,7 @@ class JugglerDashboard:
         self._app = app
         self._ui = DashboardUI(self)
         self._subscribed = False
+        self._auto_live = False
         self._name = name
         self._remote: RemoteServer | None = None
 
@@ -75,6 +76,35 @@ class JugglerDashboard:
     def refresh_tree(self) -> None:
         """Refresh the resource tree from current JugglerApp state."""
         self._populate()
+
+    def set_auto_live(self, enabled: bool) -> None:
+        """Toggle auto-apply mode. When ON, data changes apply to targets."""
+        self._auto_live = enabled
+        label = "ON" if enabled else "OFF"
+        self._log(f"Auto Live {label}")
+        if enabled:
+            self.go_live()
+
+    def go_live(self) -> None:
+        """Apply all slots to their targets and log results."""
+        self._log("Applying all slots...")
+        try:
+            results = self._app.apply_all()
+            for slot_name, slot_results in results.items():
+                for result in slot_results:
+                    status = result.get("status", "unknown")
+                    kind = result.get("kind", "")
+                    name = result.get("name", "")
+                    self._log(f"  {slot_name}: {kind}/{name} → {status}")
+            total = sum(len(r) for r in results.values())
+            self._log(f"Applied {total} resources")
+        except Exception as e:
+            self._log(f"ERROR: {e}")
+        self._populate()
+
+    def _log(self, message: str) -> None:
+        """Write a message to the UI operation log."""
+        self._ui.log_message(message)
 
     def _start_remote(self) -> None:
         """Start RemoteServer and register in the app registry."""
@@ -112,14 +142,21 @@ class JugglerDashboard:
         """Callback fired by Bag.subscribe when data changes.
 
         JugglerApp's own trigger already recompiles the affected slots.
-        We just need to re-read the compiled resources and refresh the tree.
+        We re-read the compiled resources and refresh the tree.
+        If auto_live is ON, we also apply to targets and log results.
         Uses call_from_thread because the change may come from the remote REPL.
         """
         live_app = self._ui._live_app
         if live_app is not None:
-            live_app.call_from_thread(self._populate)
+            live_app.call_from_thread(self._on_data_changed_sync)
         else:
-            self._populate()
+            self._on_data_changed_sync()
+
+    def _on_data_changed_sync(self) -> None:
+        """Synchronous handler for data changes (runs on the main thread)."""
+        self._populate()
+        if self._auto_live:
+            self.go_live()
 
     def _populate(self) -> None:
         """Compile resources and populate the tree."""
