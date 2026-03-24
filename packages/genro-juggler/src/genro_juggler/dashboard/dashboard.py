@@ -22,6 +22,8 @@ ArtifactHub: search Helm charts and display details in the dashboard.
 
 from __future__ import annotations
 
+import sys
+import traceback
 from typing import TYPE_CHECKING, Any
 
 from genro_scriba import ArtifactHub
@@ -65,9 +67,12 @@ class JugglerDashboard:
         original_setup = self._ui.setup
 
         def patched_setup() -> None:
-            original_setup()
-            self._populate()
-            self._subscribe()
+            try:
+                original_setup()
+                self._populate()
+                self._subscribe()
+            except Exception as e:
+                self._handle_error("setup", e)
 
         self._ui.setup = patched_setup  # type: ignore[assignment]
 
@@ -81,7 +86,10 @@ class JugglerDashboard:
 
     def refresh_tree(self) -> None:
         """Refresh the resource tree from current JugglerApp state."""
-        self._populate()
+        try:
+            self._populate()
+        except Exception as e:
+            self._handle_error("refresh_tree", e)
 
     def set_auto_live(self, enabled: bool) -> None:
         """Toggle auto-apply mode. When ON, data changes apply to targets."""
@@ -105,7 +113,7 @@ class JugglerDashboard:
             total = sum(len(r) for r in results.values())
             self._log(f"Applied {total} resources")
         except Exception as e:
-            self._log(f"ERROR: {e}")
+            self._handle_error("go_live", e)
         self._populate()
 
     def search_charts(self, query: str) -> None:
@@ -116,6 +124,7 @@ class JugglerDashboard:
             self._ui.populate_hub_results(results)
             self._ui.update_hub_detail(f"Found {len(results)} charts for '{query}'")
         except Exception as e:
+            self._handle_error("search_charts", e)
             self._ui.update_hub_detail(f"Search error: {e}")
             self._last_search_results = []
 
@@ -126,6 +135,13 @@ class JugglerDashboard:
     def _log(self, message: str) -> None:
         """Write a message to the UI operation log."""
         self._ui.log_message(message)
+
+    def _handle_error(self, context: str, exc: Exception) -> None:
+        """Log an error to the UI and stderr."""
+        tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
+        error_text = "".join(tb)
+        self._log(f"ERROR in {context}: {exc}")
+        print(f"[Dashboard] ERROR in {context}:\n{error_text}", file=sys.stderr)
 
     def _start_remote(self) -> None:
         """Start RemoteServer and register in the app registry."""
@@ -175,9 +191,12 @@ class JugglerDashboard:
 
     def _on_data_changed_sync(self) -> None:
         """Synchronous handler for data changes (runs on the main thread)."""
-        self._populate()
-        if self._auto_live:
-            self.go_live()
+        try:
+            self._populate()
+            if self._auto_live:
+                self.go_live()
+        except Exception as e:
+            self._handle_error("data_changed", e)
 
     def _populate(self) -> None:
         """Compile resources and populate the tree."""
