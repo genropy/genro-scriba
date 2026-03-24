@@ -60,7 +60,7 @@ class DashboardUI(TextualApp):
         hub_tab.static("", id="hub_detail")
 
         log_tab = tabs.tabpane(title="Log", id="log")
-        log_tab.richlog(id="operation_log", max_lines=500, wrap=True)
+        log_tab.richlog(id="operation_log", max_lines="500", wrap=True)
 
         page.footer()
 
