@@ -25,6 +25,7 @@ Layout:
 from __future__ import annotations
 
 import datetime
+import threading
 from typing import Any
 
 from genro_textual import TextualApp
@@ -88,13 +89,26 @@ class DashboardUI(TextualApp):
         tabs.active = "artifacthub"  # type: ignore[union-attr]
 
     def on_input_changed(self, event: Any) -> None:
-        """Handle input changes — trigger ArtifactHub search on hub_search."""
+        """Handle input changes — trigger ArtifactHub search in background thread.
+
+        Searches after 3+ chars. Runs in a thread to avoid blocking the UI
+        during the HTTP call to ArtifactHub.
+        """
         widget = getattr(event, "input", None)
         if widget is None:
             return
         widget_id = getattr(widget, "id", "")
         if widget_id == "hub_search" and len(event.value) >= 3:
-            self._dashboard.search_charts(event.value)
+            query = event.value
+            self.update_hub_detail(f"Searching '{query}'...")
+            thread = threading.Thread(
+                target=self._search_in_background, args=(query,), daemon=True,
+            )
+            thread.start()
+
+    def _search_in_background(self, query: str) -> None:
+        """Run ArtifactHub search in a background thread."""
+        self._dashboard.search_charts(query)
 
     def on_checkbox_changed(self, event: Any) -> None:
         """Handle Auto Live checkbox toggle."""

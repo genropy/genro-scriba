@@ -117,16 +117,31 @@ class JugglerDashboard:
         self._populate()
 
     def search_charts(self, query: str) -> None:
-        """Search ArtifactHub for Helm charts and display results."""
+        """Search ArtifactHub for Helm charts and display results.
+
+        May be called from a background thread. Uses call_from_thread
+        to update UI widgets safely on the main thread.
+        """
         try:
             results = self._hub.search_charts(query, limit=15)
             self._last_search_results = results
-            self._ui.populate_hub_results(results)
-            self._ui.update_hub_detail(f"Found {len(results)} charts for '{query}'")
+            self._call_on_main(self._ui.populate_hub_results, results)
+            self._call_on_main(
+                self._ui.update_hub_detail,
+                f"Found {len(results)} charts for '{query}'",
+            )
         except Exception as e:
             self._handle_error("search_charts", e)
-            self._ui.update_hub_detail(f"Search error: {e}")
+            self._call_on_main(self._ui.update_hub_detail, f"Search error: {e}")
             self._last_search_results = []
+
+    def _call_on_main(self, fn: Any, *args: Any) -> None:
+        """Call fn on the main Textual thread, or directly if no live app."""
+        live_app = self._ui._live_app
+        if live_app is not None:
+            live_app.call_from_thread(fn, *args)
+        else:
+            fn(*args)
 
     def get_search_results(self) -> list[dict[str, Any]]:
         """Return last ArtifactHub search results (for testing)."""
