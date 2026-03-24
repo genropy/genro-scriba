@@ -328,17 +328,17 @@ def launch_dashboard(file_path: str) -> None:
 def _run_dashboard_tmux(file_path: str, app_name: str) -> None:
     """Create tmux session: TUI top pane, REPL bottom pane."""
     session = f"juggler-{app_name}"
-    python = sys.executable
     file_abs = os.path.abspath(file_path)
+    juggler_bin = shutil.which("juggler") or f"{sys.executable} -m genro_juggler.cli"
 
     # Top pane: dashboard TUI (starts RemoteServer + registers in registry)
     run_cmd = (
-        f"{python} -m genro_juggler.cli dashboard-run {file_abs}; "
+        f"{juggler_bin} dashboard-run {file_abs}; "
         f"tmux kill-session -t {session}"
     )
     # Bottom pane: wait for registration, then connect REPL
     connect_cmd = (
-        f"sleep 1 && {python} -m genro_juggler.cli dashboard-repl {app_name}"
+        f"sleep 1 && {juggler_bin} dashboard-repl {app_name}"
     )
 
     subprocess.run(
