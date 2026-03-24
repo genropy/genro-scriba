@@ -8,7 +8,11 @@ DashboardUI owns the UI (TextualApp + widgets).
 JugglerDashboard connects them: compiles resources, transforms to tree
 nodes, populates the UI.
 
-Phase 1: static preview only (no reactive triggers).
+Reactive: subscribes to JugglerApp.data via Bag.subscribe(). When data
+changes, JugglerApp recompiles the affected slots (its own trigger),
+then the dashboard re-reads the compiled resources and refreshes the tree.
+Uses call_from_thread for thread safety (data changes may come from
+the remote REPL in a different thread).
 """
 
 from __future__ import annotations
@@ -31,10 +35,12 @@ class JugglerDashboard:
         dashboard.run()
     """
 
+    _SUBSCRIBER_ID = "dashboard_refresh"
+
     def __init__(self, app: JugglerApp) -> None:
         self._app = app
         self._ui = DashboardUI(self)
-        self._original_setup = self._ui.setup
+        self._subscribed = False
 
     def run(self) -> None:
         """Start the dashboard TUI."""
@@ -43,6 +49,7 @@ class JugglerDashboard:
         def patched_setup() -> None:
             original_setup()
             self._populate()
+            self._subscribe()
 
         self._ui.setup = patched_setup  # type: ignore[assignment]
         self._ui.run()
@@ -50,6 +57,36 @@ class JugglerDashboard:
     def refresh_tree(self) -> None:
         """Refresh the resource tree from current JugglerApp state."""
         self._populate()
+
+    def _subscribe(self) -> None:
+        """Subscribe to data changes on the JugglerApp Bag."""
+        if self._subscribed:
+            return
+        self._app.data.subscribe(
+            self._SUBSCRIBER_ID,
+            any=self._on_data_changed,
+        )
+        self._subscribed = True
+
+    def _unsubscribe(self) -> None:
+        """Remove the data subscription."""
+        if not self._subscribed:
+            return
+        self._app.data.unsubscribe(self._SUBSCRIBER_ID, any=True)
+        self._subscribed = False
+
+    def _on_data_changed(self, **_kwargs: Any) -> None:
+        """Callback fired by Bag.subscribe when data changes.
+
+        JugglerApp's own trigger already recompiles the affected slots.
+        We just need to re-read the compiled resources and refresh the tree.
+        Uses call_from_thread because the change may come from the remote REPL.
+        """
+        live_app = self._ui._live_app
+        if live_app is not None:
+            live_app.call_from_thread(self._populate)
+        else:
+            self._populate()
 
     def _populate(self) -> None:
         """Compile resources and populate the tree."""

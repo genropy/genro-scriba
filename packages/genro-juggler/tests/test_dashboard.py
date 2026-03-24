@@ -1,7 +1,7 @@
 # Copyright 2025 Softwell S.r.l. - Licensed under Apache License 2.0
 # See LICENSE file for details
 
-"""Tests for JugglerDashboard — Phase 1: transforms and tree data."""
+"""Tests for JugglerDashboard — transforms, tree data, and reactive triggers."""
 
 from __future__ import annotations
 
@@ -238,3 +238,103 @@ class TestJugglerDashboardData:
         assert "frontend" in all_res_names
         assert "backend" in all_res_names
         assert "db-creds" in all_res_names
+
+
+# =========================================================================
+# JugglerDashboard: reactive trigger (Phase 2)
+# =========================================================================
+
+
+class TestReactiveTrigger:
+
+    def test_subscribe_and_unsubscribe(self) -> None:
+        app = SimpleK8sInfra(data={"api.image": "myapp:v1"})
+        dashboard = JugglerDashboard(app)
+
+        assert not dashboard._subscribed
+        dashboard._subscribe()
+        assert dashboard._subscribed
+
+        dashboard._unsubscribe()
+        assert not dashboard._subscribed
+
+    def test_subscribe_idempotent(self) -> None:
+        app = SimpleK8sInfra(data={"api.image": "myapp:v1"})
+        dashboard = JugglerDashboard(app)
+
+        dashboard._subscribe()
+        dashboard._subscribe()  # second call is a no-op
+        assert dashboard._subscribed
+
+        dashboard._unsubscribe()
+        assert not dashboard._subscribed
+
+    def test_data_change_updates_tree_data(self) -> None:
+        """After subscribing, data changes are reflected in get_tree_data."""
+        mock = MockK8sTarget(verbose=False)
+        app = SimpleK8sInfra(
+            targets={"kubernetes": mock},
+            data={"api.image": "myapp:v1"},
+        )
+        dashboard = JugglerDashboard(app)
+        dashboard._subscribe()
+
+        # Verify initial image is resolved in compiled resources
+        initial_resources = collect_slot_resources(app)
+        k8s = initial_resources["kubernetes"]
+        dep = next(r for r in k8s if r.get("kind") == "Deployment")
+        containers = dep["spec"]["template"]["spec"]["containers"]
+        assert containers[0]["image"] == "myapp:v1"
+
+        # Change data — JugglerApp recompiles automatically
+        app.data["api.image"] = "myapp:v2"
+
+        # Verify the compiled resources now reflect v2
+        updated_resources = collect_slot_resources(app)
+        k8s_updated = updated_resources["kubernetes"]
+        dep_updated = next(r for r in k8s_updated if r.get("kind") == "Deployment")
+        containers_updated = dep_updated["spec"]["template"]["spec"]["containers"]
+        assert containers_updated[0]["image"] == "myapp:v2"
+
+        # Tree data should still be consistent
+        tree_data = dashboard.get_tree_data()
+        assert len(tree_data) >= 1
+
+    def test_mock_target_records_reapply_after_data_change(self) -> None:
+        """MockK8sTarget log grows when data changes trigger recompile."""
+        mock = MockK8sTarget(verbose=False)
+        app = SimpleK8sInfra(
+            targets={"kubernetes": mock},
+            data={"api.image": "myapp:v1"},
+        )
+        dashboard = JugglerDashboard(app)
+        dashboard._subscribe()
+
+        initial_log_count = len(mock.get_log())
+
+        # Change data — triggers JugglerApp recompile + apply
+        app.data["api.image"] = "myapp:v2"
+
+        assert len(mock.get_log()) > initial_log_count
+
+        # Dashboard tree data reflects updated status
+        tree_data = dashboard.get_tree_data()
+        k8s_slot = tree_data[0]
+        assert "[connected]" in k8s_slot["label"]
+
+    def test_on_data_changed_without_live_app(self) -> None:
+        """_on_data_changed works without a running LiveApp (falls back to direct call)."""
+        mock = MockK8sTarget(verbose=False)
+        app = SimpleK8sInfra(
+            targets={"kubernetes": mock},
+            data={"api.image": "myapp:v1"},
+        )
+        dashboard = JugglerDashboard(app)
+
+        # No live_app is running — _on_data_changed should still work
+        # by calling _populate directly
+        dashboard._on_data_changed()
+
+        # No crash, and tree data is consistent
+        tree_data = dashboard.get_tree_data()
+        assert len(tree_data) >= 1
