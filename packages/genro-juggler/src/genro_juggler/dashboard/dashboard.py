@@ -29,7 +29,11 @@ from typing import TYPE_CHECKING, Any
 from genro_scriba import ArtifactHub
 
 from genro_juggler import registry
-from genro_juggler.dashboard.transforms import collect_slot_resources, resources_to_tree_nodes
+from genro_juggler.dashboard.transforms import (
+    collect_slot_resources,
+    resources_to_rich_text,
+    resources_to_tree_nodes,
+)
 from genro_juggler.dashboard.ui import DashboardUI
 from genro_juggler.remote import RemoteServer
 
@@ -214,11 +218,15 @@ class JugglerDashboard:
             self._handle_error("data_changed", e)
 
     def _populate(self) -> None:
-        """Compile resources and populate the tree."""
+        """Compile resources and populate tree + detail panel."""
         slot_resources = collect_slot_resources(self._app)
         statuses = self._app.status()
+
         tree_nodes = resources_to_tree_nodes(slot_resources, statuses)
         self._ui.populate_tree(tree_nodes)
+
+        rich_text = resources_to_rich_text(slot_resources, statuses)
+        self._ui.update_resource_detail(rich_text)
 
         total_resources = sum(len(r) for r in slot_resources.values())
         slot_names = ", ".join(slot_resources.keys())

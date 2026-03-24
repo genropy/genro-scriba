@@ -3,22 +3,19 @@
 
 """DashboardUI — TextualApp subclass for the Juggler dashboard.
 
-Defines the TUI layout: header, tabbed content with Infrastructure,
-ArtifactHub and Log tabs.
-
 Layout:
     Header: "Juggler Dashboard"
     TabbedContent:
         Tab "Infrastructure":
-            Tree (resource hierarchy: slot > kind > name)
-            Checkbox "Auto Live" (toggle auto-apply to targets)
+            Horizontal split:
+                Left: Tree (resource hierarchy: slot > kind > name)
+                Right: Static with Rich markup (resource detail cards)
+            Checkbox "Auto Live"
             Static (status summary)
         Tab "ArtifactHub":
-            Input (search query)
-            DataTable (search results: name, repo, version, stars)
-            Static (chart detail)
+            Input + DataTable + Static
         Tab "Log":
-            RichLog (operation history)
+            RichLog
     Footer
 """
 
@@ -51,7 +48,11 @@ class DashboardUI(TextualApp):
         tabs = page.tabbedcontent(initial="infrastructure")
 
         infra_tab = tabs.tabpane(title="Infrastructure", id="infrastructure")
-        infra_tab.tree(label="Resources", id="resource_tree")
+        split = infra_tab.horizontal(id="infra_split")
+        split.tree(label="Resources", id="resource_tree")
+        split.verticalscroll(id="detail_scroll").static(
+            "", id="resource_detail", markup=True,
+        )
         infra_tab.checkbox(content="Auto Live", value=False, id="auto_live")
         infra_tab.static("", id="status_summary")
 
@@ -135,6 +136,13 @@ class DashboardUI(TextualApp):
                 for res_node in kind_node.get("children", []):
                     kind_branch.add_leaf(res_node["label"])
 
+    def update_resource_detail(self, rich_text: str) -> None:
+        """Update the resource detail panel with Rich markup."""
+        if self._live_app is None:
+            return
+        widget = self._live_app.query_one("#resource_detail")
+        widget.update(rich_text)  # type: ignore[union-attr]
+
     def update_status(self, summary: str) -> None:
         """Update the status summary text."""
         if self._live_app is None:
@@ -177,9 +185,25 @@ class DashboardUI(TextualApp):
 
 
 DASHBOARD_CSS = """
-#resource_tree {
+#infra_split {
     height: 1fr;
-    min-height: 10;
+    min-height: 12;
+}
+
+#resource_tree {
+    width: 1fr;
+    min-width: 30;
+}
+
+#detail_scroll {
+    width: 2fr;
+    min-width: 40;
+    border-left: solid $accent;
+    padding: 0 1;
+}
+
+#resource_detail {
+    height: auto;
 }
 
 #auto_live {
