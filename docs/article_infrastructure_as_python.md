@@ -203,6 +203,68 @@ The Python code reads like the tool's native configuration. There's no mental tr
 
 ---
 
+## From Files to Live Targets: The Reactive Bus
+
+Everything described so far generates *files*. But what if you could apply the same typed recipes directly to a live Kubernetes cluster or an Ansible inventory — and have them **re-apply automatically** when data changes?
+
+This is what **genro-juggler** does. It's a reactive infrastructure bus that sits on top of the same builder+compiler pipeline, but instead of writing YAML to disk, it pushes compiled resources to **targets**: the Kubernetes API, ansible-runner, or any custom backend.
+
+```python
+class WebStack(JugglerApp):
+
+    def kubernetes_recipe(self, root):
+        root.secret(name="db-creds", data={
+            "username": "^db.user",
+            "password": "^db.password",
+        })
+
+        dep = root.deployment(name="api", image="^api.image", replicas=3)
+        c = dep.container(name="api", image="^api.image")
+        c.port(container_port=8080)
+        c.env_var(name="DB_HOST", value="^db.host")
+        c.env_var(name="DB_PASSWORD",
+                  value_from_secret="db-creds", secret_key="password")
+
+        svc = root.service(name="api")
+        svc.service_port(port=80, target_port=8080)
+
+    def ansible_recipe(self, root):
+        setup = root.play(name="Prepare servers",
+                          hosts="^ansible.hosts", become=True)
+        setup.task(name="Install Docker", module="apt",
+                   args_name="docker.io", args_state="present")
+        setup.task(name="Install K3s", module="shell",
+                   args_cmd="curl -sfL https://get.k3s.io | sh -")
+```
+
+Same pattern as before: recipes define structure, `^` pointers reference data. But now when you change a value, the affected target gets updated *live*:
+
+```python
+app = WebStack(
+    targets={"kubernetes": K8sTarget(), "ansible": AnsibleTarget()},
+    data={"api.image": "myapp:v1.0.0", "db.host": "postgres.internal", ...}
+)
+
+# Later: rolling update — only Kubernetes slot recompiles and reapplies
+app.data["api.image"] = "myapp:v2.0.0"
+```
+
+The dependency tracking is the same as `ScribaApp`: juggler knows which `^` pointers each slot resolved, so changing `api.image` only triggers the Kubernetes target, not Ansible.
+
+Juggler also comes with a **CLI and remote REPL**:
+
+```bash
+juggler run my_infra.py          # Start app in background
+juggler connect my_infra         # Interactive REPL
+juggler yaml my_infra.py         # Dry-run: print YAML without applying
+```
+
+From the REPL you can inspect status, preview YAML, and push data changes to a running app — useful for live debugging and incremental rollouts.
+
+The key insight: **the same recipe, the same builders, the same validation** work whether you're generating a file for CI/CD or applying directly to a cluster. The target is pluggable; the grammar is the same.
+
+---
+
 ## The MCP Angle: AI-Native Infrastructure
 
 Here's where it gets interesting.
@@ -246,11 +308,13 @@ Same builder. Same validation. Same documentation. Three modes of interaction.
 | **Reusable patterns** | Copy-paste | Templates | Functions | @component |
 | **AI-ready** | No | No | Partial | Native (MCP) |
 | **Selective recompile** | N/A | No | Partial | Yes |
+| **Live apply** | No | Helm install | Yes | Yes (juggler) |
+| **Reactive updates** | No | No | Partial | Yes (data triggers) |
 | **Learning curve** | Tool docs | Tool + Helm | Tool + SDK | Just Python |
 
 Helm and Kustomize are YAML preprocessors — they operate at the text level, not the semantic level. Pulumi and CDK are closer in spirit, but they're designed to *orchestrate* infrastructure, not just *configure* it.
 
-genro-scriba deliberately does less: **it generates configuration files, nothing more**. No state management, no API calls, no drift detection. It's a compiler from typed Python to YAML. This constraint is a feature — it composes with any deployment workflow rather than replacing it.
+genro-scriba's core is deliberately minimal: **it generates configuration files**. But with genro-juggler, the same recipes can apply directly to live targets — Kubernetes clusters, Ansible inventories — with reactive updates when data changes. The grammar stays the same; only the output channel changes. This layered design means you can start with file generation and graduate to live apply without rewriting your recipes.
 
 ---
 
