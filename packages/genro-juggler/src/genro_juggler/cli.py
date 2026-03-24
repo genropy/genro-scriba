@@ -9,11 +9,13 @@ Commands:
     juggler connect NAME      Connect REPL to a running app
     juggler stop NAME         Stop a running app
     juggler yaml FILE.py      Dry-run: print YAML without applying
+    juggler dashboard FILE.py Launch TUI dashboard for a JugglerApp
 
 Usage:
     juggler run examples/my_infra.py
     juggler connect my_infra
     juggler list
+    juggler dashboard examples/my_infra.py
 """
 
 from __future__ import annotations
@@ -58,6 +60,10 @@ def main() -> None:
     yaml_parser.add_argument("file", help="Python file with Application class")
     yaml_parser.add_argument("--slot", default="", help="Slot name (default: all)")
 
+    # dashboard
+    dash_parser = sub.add_parser("dashboard", help="Launch TUI dashboard")
+    dash_parser.add_argument("file", help="Python file with Application class")
+
     args = parser.parse_args()
 
     if args.command == "run":
@@ -70,6 +76,8 @@ def main() -> None:
         stop_app(args.name)
     elif args.command == "yaml":
         dry_run(args.file, args.slot)
+    elif args.command == "dashboard":
+        launch_dashboard(args.file)
     else:
         parser.print_help()
 
@@ -269,6 +277,37 @@ def dry_run(file_path: str, slot: str = "") -> None:
         for slot_name in app._slots:
             print(f"--- {slot_name} ---")
             print(app.to_yaml(slot_name))
+
+
+def launch_dashboard(file_path: str) -> None:
+    """Load a JugglerApp and launch the TUI dashboard."""
+    try:
+        from genro_juggler.dashboard import JugglerDashboard
+    except ImportError:
+        print("Dashboard requires genro-textual. Install with:")
+        print("  pip install genro-juggler[dashboard]")
+        sys.exit(1)
+
+    path = Path(file_path).resolve()
+    if not path.exists():
+        print(f"File not found: {path}")
+        sys.exit(1)
+
+    spec = importlib.util.spec_from_file_location("juggler_app", str(path))
+    if spec is None or spec.loader is None:
+        print(f"Cannot load: {path}")
+        sys.exit(1)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    app_class = getattr(module, "Application", None)
+    if app_class is None:
+        print(f"No 'Application' class found in {path}")
+        sys.exit(1)
+
+    app = app_class()
+    dashboard = JugglerDashboard(app)
+    dashboard.run()
 
 
 def _check_alive(port: int) -> bool:
