@@ -13,14 +13,19 @@ changes, JugglerApp recompiles the affected slots (its own trigger),
 then the dashboard re-reads the compiled resources and refreshes the tree.
 Uses call_from_thread for thread safety (data changes may come from
 the remote REPL in a different thread).
+
+Remote: starts a RemoteServer so the REPL in the bottom tmux pane can
+control the JugglerApp (set data, apply, status, yaml).
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from genro_juggler import registry
 from genro_juggler.dashboard.transforms import collect_slot_resources, resources_to_tree_nodes
 from genro_juggler.dashboard.ui import DashboardUI
+from genro_juggler.remote import RemoteServer
 
 if TYPE_CHECKING:
     from genro_juggler.juggler_app import JugglerApp
@@ -33,17 +38,23 @@ class JugglerDashboard:
         app = MyInfra(targets={...}, data={...})
         dashboard = JugglerDashboard(app)
         dashboard.run()
+
+    With REPL (tmux):
+        dashboard = JugglerDashboard(app, name="my_infra")
+        dashboard.run()  # starts RemoteServer + registers in registry
     """
 
     _SUBSCRIBER_ID = "dashboard_refresh"
 
-    def __init__(self, app: JugglerApp) -> None:
+    def __init__(self, app: JugglerApp, name: str = "") -> None:
         self._app = app
         self._ui = DashboardUI(self)
         self._subscribed = False
+        self._name = name
+        self._remote: RemoteServer | None = None
 
     def run(self) -> None:
-        """Start the dashboard TUI."""
+        """Start the dashboard TUI (and RemoteServer if name is set)."""
         original_setup = self._ui.setup
 
         def patched_setup() -> None:
@@ -52,11 +63,33 @@ class JugglerDashboard:
             self._subscribe()
 
         self._ui.setup = patched_setup  # type: ignore[assignment]
-        self._ui.run()
+
+        if self._name:
+            self._start_remote()
+
+        try:
+            self._ui.run()
+        finally:
+            self._stop_remote()
 
     def refresh_tree(self) -> None:
         """Refresh the resource tree from current JugglerApp state."""
         self._populate()
+
+    def _start_remote(self) -> None:
+        """Start RemoteServer and register in the app registry."""
+        port = registry.find_free_port()
+        self._remote = RemoteServer(self._app, port)
+        self._remote.start()
+        registry.register_app(self._name, port, self._remote.token)
+
+    def _stop_remote(self) -> None:
+        """Stop RemoteServer and unregister from registry."""
+        if self._remote is not None:
+            self._remote.stop()
+            self._remote = None
+        if self._name:
+            registry.unregister_app(self._name)
 
     def _subscribe(self) -> None:
         """Subscribe to data changes on the JugglerApp Bag."""

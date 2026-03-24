@@ -7,12 +7,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from genro_juggler import JugglerApp
+from genro_juggler import JugglerApp, registry
 from genro_juggler.dashboard.dashboard import JugglerDashboard
 from genro_juggler.dashboard.transforms import (
     collect_slot_resources,
     resources_to_tree_nodes,
 )
+from genro_juggler.remote import RemoteProxy
 from genro_juggler.targets.mock_kubernetes import MockK8sTarget
 
 # =========================================================================
@@ -338,3 +339,89 @@ class TestReactiveTrigger:
         # No crash, and tree data is consistent
         tree_data = dashboard.get_tree_data()
         assert len(tree_data) >= 1
+
+
+# =========================================================================
+# JugglerDashboard: remote server + REPL (Phase 3)
+# =========================================================================
+
+
+class TestDashboardRemote:
+
+    def test_start_and_stop_remote(self) -> None:
+        """Dashboard with name starts RemoteServer and registers in registry."""
+        app = SimpleK8sInfra(data={"api.image": "myapp:v1"})
+        dashboard = JugglerDashboard(app, name="test_dash_remote")
+
+        dashboard._start_remote()
+        try:
+            assert dashboard._remote is not None
+
+            info = registry.get_app_info("test_dash_remote")
+            assert info is not None
+            assert "port" in info
+            assert "token" in info
+
+            # RemoteProxy can connect and get status
+            proxy = RemoteProxy("127.0.0.1", info["port"], info["token"])
+            status = proxy.status()
+            assert "kubernetes" in status
+        finally:
+            dashboard._stop_remote()
+
+        assert dashboard._remote is None
+        assert registry.get_app_info("test_dash_remote") is None
+
+    def test_remote_data_set_triggers_recompile(self) -> None:
+        """Setting data via RemoteProxy triggers recompile in JugglerApp."""
+        mock = MockK8sTarget(verbose=False)
+        app = SimpleK8sInfra(
+            targets={"kubernetes": mock},
+            data={"api.image": "myapp:v1"},
+        )
+        dashboard = JugglerDashboard(app, name="test_dash_data")
+
+        dashboard._start_remote()
+        try:
+            info = registry.get_app_info("test_dash_data")
+            proxy = RemoteProxy("127.0.0.1", info["port"], info["token"])
+
+            initial_log = len(mock.get_log())
+
+            # Set data via remote — triggers reactive recompile + apply
+            proxy.data_set("api.image", "myapp:v2")
+
+            assert len(mock.get_log()) > initial_log
+
+            # Verify the new value
+            value = proxy.data_get("api.image")
+            assert value == "myapp:v2"
+        finally:
+            dashboard._stop_remote()
+
+    def test_remote_yaml_and_slots(self) -> None:
+        """RemoteProxy can get YAML and slot list."""
+        app = SimpleK8sInfra(data={"api.image": "myapp:v1"})
+        dashboard = JugglerDashboard(app, name="test_dash_yaml")
+
+        dashboard._start_remote()
+        try:
+            info = registry.get_app_info("test_dash_yaml")
+            proxy = RemoteProxy("127.0.0.1", info["port"], info["token"])
+
+            slots = proxy.slots()
+            assert "kubernetes" in slots
+
+            yaml_str = proxy.to_yaml("kubernetes")
+            assert "kind: Deployment" in yaml_str
+            assert "myapp:v1" in yaml_str
+        finally:
+            dashboard._stop_remote()
+
+    def test_dashboard_without_name_no_remote(self) -> None:
+        """Dashboard without name does not start RemoteServer."""
+        app = SimpleK8sInfra(data={"api.image": "myapp:v1"})
+        dashboard = JugglerDashboard(app)
+
+        assert dashboard._remote is None
+        assert dashboard._name == ""

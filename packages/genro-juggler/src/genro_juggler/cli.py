@@ -4,12 +4,14 @@
 """CLI for genro-juggler.
 
 Commands:
-    juggler run FILE.py       Run a JugglerApp from a Python file
-    juggler list              List running juggler apps
-    juggler connect NAME      Connect REPL to a running app
-    juggler stop NAME         Stop a running app
-    juggler yaml FILE.py      Dry-run: print YAML without applying
-    juggler dashboard FILE.py Launch TUI dashboard for a JugglerApp
+    juggler run FILE.py              Run a JugglerApp from a Python file
+    juggler list                     List running juggler apps
+    juggler connect NAME             Connect REPL to a running app
+    juggler stop NAME                Stop a running app
+    juggler yaml FILE.py             Dry-run: print YAML without applying
+    juggler dashboard FILE.py        Launch TUI dashboard (tmux split with REPL)
+    juggler dashboard-run FILE.py    Run dashboard TUI only (internal, used by tmux)
+    juggler dashboard-repl NAME      Connect REPL to a dashboard (internal, used by tmux)
 
 Usage:
     juggler run examples/my_infra.py
@@ -23,7 +25,10 @@ from __future__ import annotations
 import argparse
 import code
 import importlib.util
+import os
+import shutil
 import socket
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -60,9 +65,17 @@ def main() -> None:
     yaml_parser.add_argument("file", help="Python file with Application class")
     yaml_parser.add_argument("--slot", default="", help="Slot name (default: all)")
 
-    # dashboard
-    dash_parser = sub.add_parser("dashboard", help="Launch TUI dashboard")
+    # dashboard (user-facing: tmux split)
+    dash_parser = sub.add_parser("dashboard", help="Launch TUI dashboard with REPL")
     dash_parser.add_argument("file", help="Python file with Application class")
+
+    # dashboard-run (internal: TUI only, used by tmux top pane)
+    dash_run_parser = sub.add_parser("dashboard-run", help=argparse.SUPPRESS)
+    dash_run_parser.add_argument("file", help="Python file with Application class")
+
+    # dashboard-repl (internal: REPL only, used by tmux bottom pane)
+    dash_repl_parser = sub.add_parser("dashboard-repl", help=argparse.SUPPRESS)
+    dash_repl_parser.add_argument("name", help="Dashboard app name")
 
     args = parser.parse_args()
 
@@ -78,6 +91,10 @@ def main() -> None:
         dry_run(args.file, args.slot)
     elif args.command == "dashboard":
         launch_dashboard(args.file)
+    elif args.command == "dashboard-run":
+        dashboard_run(args.file)
+    elif args.command == "dashboard-repl":
+        dashboard_repl(args.name)
     else:
         parser.print_help()
 
@@ -280,9 +297,12 @@ def dry_run(file_path: str, slot: str = "") -> None:
 
 
 def launch_dashboard(file_path: str) -> None:
-    """Load a JugglerApp and launch the TUI dashboard."""
+    """Launch dashboard in tmux: TUI on top, REPL on bottom.
+
+    Falls back to TUI-only mode if tmux is not available.
+    """
     try:
-        from genro_juggler.dashboard import JugglerDashboard
+        from genro_juggler.dashboard import JugglerDashboard  # noqa: F401
     except ImportError:
         print("Dashboard requires genro-textual. Install with:")
         print("  pip install genro-juggler[dashboard]")
@@ -293,21 +313,145 @@ def launch_dashboard(file_path: str) -> None:
         print(f"File not found: {path}")
         sys.exit(1)
 
-    spec = importlib.util.spec_from_file_location("juggler_app", str(path))
-    if spec is None or spec.loader is None:
-        print(f"Cannot load: {path}")
-        sys.exit(1)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    app_name = f"dashboard-{path.stem}"
 
-    app_class = getattr(module, "Application", None)
-    if app_class is None:
-        print(f"No 'Application' class found in {path}")
+    if shutil.which("tmux") is None:
+        print("tmux not found. Running dashboard without REPL.")
+        print("Install tmux for the split TUI+REPL experience.")
+        print()
+        dashboard_run(str(path))
+        return
+
+    _run_dashboard_tmux(str(path), app_name)
+
+
+def _run_dashboard_tmux(file_path: str, app_name: str) -> None:
+    """Create tmux session: TUI top pane, REPL bottom pane."""
+    session = f"juggler-{app_name}"
+    python = sys.executable
+    file_abs = os.path.abspath(file_path)
+
+    # Top pane: dashboard TUI (starts RemoteServer + registers in registry)
+    run_cmd = (
+        f"{python} -m genro_juggler.cli dashboard-run {file_abs}; "
+        f"tmux kill-session -t {session}"
+    )
+    # Bottom pane: wait for registration, then connect REPL
+    connect_cmd = (
+        f"sleep 1 && {python} -m genro_juggler.cli dashboard-repl {app_name}"
+    )
+
+    subprocess.run(
+        ["tmux", "new-session", "-d", "-s", session, "-x", "200", "-y", "50", run_cmd],
+        check=True,
+    )
+    subprocess.run(
+        ["tmux", "split-window", "-v", "-t", session, "-p", "30", connect_cmd],
+        check=True,
+    )
+    subprocess.run(
+        ["tmux", "set-option", "-t", session, "mouse", "on"],
+        check=True,
+    )
+    subprocess.run(
+        ["tmux", "select-pane", "-t", session + ":.0"],
+        check=True,
+    )
+    os.execvp("tmux", ["tmux", "attach-session", "-t", session])
+
+
+def dashboard_run(file_path: str) -> None:
+    """Run dashboard TUI only (internal, called by tmux top pane)."""
+    from genro_juggler.dashboard import JugglerDashboard
+
+    path = Path(file_path).resolve()
+    if not path.exists():
+        print(f"File not found: {path}")
         sys.exit(1)
 
-    app = app_class()
-    dashboard = JugglerDashboard(app)
+    app_instance = _load_app(path)
+    app_name = f"dashboard-{path.stem}"
+    dashboard = JugglerDashboard(app_instance, name=app_name)
     dashboard.run()
+
+
+def dashboard_repl(name: str) -> None:
+    """Connect REPL to a running dashboard (internal, called by tmux bottom pane)."""
+    info = registry.get_app_info(name)
+    if info is None:
+        print(f"Dashboard '{name}' not found. Waiting...")
+        # Retry a few times — the TUI pane may still be starting
+        import time
+        for _attempt in range(10):
+            time.sleep(1)
+            info = registry.get_app_info(name)
+            if info is not None:
+                break
+        if info is None:
+            print(f"Dashboard '{name}' not available after 10 seconds.")
+            sys.exit(1)
+
+    port = info["port"]
+    token = info.get("token", "")
+
+    proxy = RemoteProxy("127.0.0.1", port, token)
+
+    try:
+        slots = proxy.slots()
+        status = proxy.status()
+    except Exception as e:
+        print(f"Cannot connect to '{name}': {e}")
+        sys.exit(1)
+
+    print(f"Connected to dashboard '{name}' (port {port})")
+    print(f"Slots: {slots}")
+    print(f"Status: {status}")
+    print()
+    _print_dashboard_repl_help()
+    print()
+
+    namespace: dict[str, Any] = {"app": proxy}
+
+    class DashboardSlashConsole(code.InteractiveConsole):
+        """REPL with dashboard-specific slash commands."""
+
+        def runsource(self, source: str, filename: str = "<input>",
+                      symbol: str = "single") -> bool:
+            stripped = source.strip()
+            if stripped == "/quit":
+                raise SystemExit
+            if stripped == "/help":
+                _print_dashboard_repl_help()
+                return False
+            if stripped == "/status":
+                _safe_print(proxy.status)
+                return False
+            if stripped == "/slots":
+                _safe_print(proxy.slots)
+                return False
+            if stripped.startswith("/yaml"):
+                parts = stripped.split()
+                slot = parts[1] if len(parts) > 1 else ""
+                if slot:
+                    _safe_print(lambda: proxy.to_yaml(slot))
+                else:
+                    _print_all_yaml(proxy)
+                return False
+            if stripped.startswith("/apply"):
+                parts = stripped.split()
+                slot = parts[1] if len(parts) > 1 else ""
+                if slot:
+                    _safe_print(lambda: proxy.apply(slot))
+                else:
+                    _safe_print(proxy.apply_all)
+                return False
+            if stripped == "/live":
+                _safe_print(proxy.apply_all)
+                return False
+            return super().runsource(source, filename, symbol)
+
+    console = DashboardSlashConsole(locals=namespace)
+    console.interact(banner="", exitmsg="Disconnected.")
 
 
 def _check_alive(port: int) -> bool:
@@ -322,6 +466,38 @@ def _check_alive(port: int) -> bool:
         return False
 
 
+def _load_app(path: Path) -> Any:
+    """Load a JugglerApp from a Python file."""
+    spec = importlib.util.spec_from_file_location("juggler_app", str(path))
+    if spec is None or spec.loader is None:
+        print(f"Cannot load: {path}")
+        sys.exit(1)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    app_class = getattr(module, "Application", None)
+    if app_class is None:
+        print(f"No 'Application' class found in {path}")
+        sys.exit(1)
+    return app_class()
+
+
+def _safe_print(fn: Any) -> None:
+    """Call fn() and print result, catching errors."""
+    try:
+        result = fn()
+        print(result)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def _print_all_yaml(proxy: RemoteProxy) -> None:
+    """Print YAML for all slots."""
+    for slot in proxy.slots():
+        print(f"--- {slot} ---")
+        _safe_print(lambda s=slot: proxy.to_yaml(s))
+
+
 def _print_repl_help() -> None:
     print("Slash commands:")
     print("  /status           — target status")
@@ -333,6 +509,24 @@ def _print_repl_help() -> None:
     print("Python expressions:")
     print("  app.status()")
     print("  app.data_set('api.image', 'myapp:v2')")
+    print("  app.data_get('api.image')")
+    print("  app.apply('kubernetes')")
+    print("  app.to_yaml('ansible')")
+
+
+def _print_dashboard_repl_help() -> None:
+    print("Slash commands:")
+    print("  /status           — target status")
+    print("  /slots            — list slots")
+    print("  /yaml [slot]      — show YAML (all slots if no name)")
+    print("  /apply [slot]     — apply slot to target (all if no name)")
+    print("  /live             — apply all slots (Go Live)")
+    print("  /help             — this help")
+    print("  /quit             — disconnect")
+    print()
+    print("Python expressions:")
+    print("  app.status()")
+    print("  app.data_set('api.image', 'myapp:v2')  # triggers tree refresh")
     print("  app.data_get('api.image')")
     print("  app.apply('kubernetes')")
     print("  app.to_yaml('ansible')")
