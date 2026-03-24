@@ -16,11 +16,15 @@ the remote REPL in a different thread).
 
 Remote: starts a RemoteServer so the REPL in the bottom tmux pane can
 control the JugglerApp (set data, apply, status, yaml).
+
+ArtifactHub: search Helm charts and display details in the dashboard.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+
+from genro_scriba import ArtifactHub
 
 from genro_juggler import registry
 from genro_juggler.dashboard.transforms import collect_slot_resources, resources_to_tree_nodes
@@ -53,6 +57,8 @@ class JugglerDashboard:
         self._auto_live = False
         self._name = name
         self._remote: RemoteServer | None = None
+        self._hub = ArtifactHub()
+        self._last_search_results: list[dict[str, Any]] = []
 
     def run(self) -> None:
         """Start the dashboard TUI (and RemoteServer if name is set)."""
@@ -101,6 +107,21 @@ class JugglerDashboard:
         except Exception as e:
             self._log(f"ERROR: {e}")
         self._populate()
+
+    def search_charts(self, query: str) -> None:
+        """Search ArtifactHub for Helm charts and display results."""
+        try:
+            results = self._hub.search_charts(query, limit=15)
+            self._last_search_results = results
+            self._ui.populate_hub_results(results)
+            self._ui.update_hub_detail(f"Found {len(results)} charts for '{query}'")
+        except Exception as e:
+            self._ui.update_hub_detail(f"Search error: {e}")
+            self._last_search_results = []
+
+    def get_search_results(self) -> list[dict[str, Any]]:
+        """Return last ArtifactHub search results (for testing)."""
+        return list(self._last_search_results)
 
     def _log(self, message: str) -> None:
         """Write a message to the UI operation log."""

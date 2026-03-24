@@ -3,9 +3,8 @@
 
 """DashboardUI — TextualApp subclass for the Juggler dashboard.
 
-Defines the TUI layout: header, tabbed content with Infrastructure and
-Log tabs, tree widget for resources, Auto Live checkbox, RichLog for
-operation history, footer.
+Defines the TUI layout: header, tabbed content with Infrastructure,
+ArtifactHub and Log tabs.
 
 Layout:
     Header: "Juggler Dashboard"
@@ -14,6 +13,10 @@ Layout:
             Tree (resource hierarchy: slot > kind > name)
             Checkbox "Auto Live" (toggle auto-apply to targets)
             Static (status summary)
+        Tab "ArtifactHub":
+            Input (search query)
+            DataTable (search results: name, repo, version, stars)
+            Static (chart detail)
         Tab "Log":
             RichLog (operation history)
     Footer
@@ -40,6 +43,7 @@ class DashboardUI(TextualApp):
         page.binding(key="q", action="quit", description="Quit")
         page.binding(key="r", action="refresh", description="Refresh")
         page.binding(key="l", action="switch_log", description="Log tab")
+        page.binding(key="a", action="switch_hub", description="ArtifactHub")
 
         page.header(content="Juggler Dashboard")
 
@@ -49,6 +53,11 @@ class DashboardUI(TextualApp):
         infra_tab.tree(label="Resources", id="resource_tree")
         infra_tab.checkbox(content="Auto Live", value=False, id="auto_live")
         infra_tab.static("", id="status_summary")
+
+        hub_tab = tabs.tabpane(title="ArtifactHub", id="artifacthub")
+        hub_tab.input(placeholder="Search Helm charts...", id="hub_search")
+        hub_tab.datatable(id="hub_results", show_header=True, cursor_type="row")
+        hub_tab.static("", id="hub_detail")
 
         log_tab = tabs.tabpane(title="Log", id="log")
         log_tab.richlog(id="operation_log", max_lines=500, wrap=True)
@@ -70,6 +79,22 @@ class DashboardUI(TextualApp):
             return
         tabs = self._live_app.query_one("TabbedContent")
         tabs.active = "log"  # type: ignore[union-attr]
+
+    def action_switch_hub(self) -> None:
+        """Switch to the ArtifactHub tab."""
+        if self._live_app is None:
+            return
+        tabs = self._live_app.query_one("TabbedContent")
+        tabs.active = "artifacthub"  # type: ignore[union-attr]
+
+    def on_input_changed(self, event: Any) -> None:
+        """Handle input changes — trigger ArtifactHub search on hub_search."""
+        widget = getattr(event, "input", None)
+        if widget is None:
+            return
+        widget_id = getattr(widget, "id", "")
+        if widget_id == "hub_search" and len(event.value) >= 3:
+            self._dashboard.search_charts(event.value)
 
     def on_checkbox_changed(self, event: Any) -> None:
         """Handle Auto Live checkbox toggle."""
@@ -103,6 +128,31 @@ class DashboardUI(TextualApp):
         widget = self._live_app.query_one("#status_summary")
         widget.update(summary)
 
+    def populate_hub_results(self, results: list[dict[str, Any]]) -> None:
+        """Populate the ArtifactHub DataTable with search results."""
+        if self._live_app is None:
+            return
+        table = self._live_app.query_one("#hub_results")
+        table.clear(columns=True)  # type: ignore[union-attr]
+        table.add_columns("Name", "Repo", "Version", "Stars", "Description")  # type: ignore[union-attr]
+        for chart in results:
+            table.add_row(  # type: ignore[union-attr]
+                chart.get("name", ""),
+                chart.get("repo", ""),
+                chart.get("version", ""),
+                str(chart.get("stars", 0)),
+                (chart.get("description", "")[:60] + "..."
+                 if len(chart.get("description", "")) > 60
+                 else chart.get("description", "")),
+            )
+
+    def update_hub_detail(self, detail: str) -> None:
+        """Update the ArtifactHub detail text."""
+        if self._live_app is None:
+            return
+        widget = self._live_app.query_one("#hub_detail")
+        widget.update(detail)  # type: ignore[union-attr]
+
     def log_message(self, message: str) -> None:
         """Append a message to the operation log."""
         if self._live_app is None:
@@ -124,6 +174,22 @@ DASHBOARD_CSS = """
 }
 
 #status_summary {
+    height: auto;
+    padding: 1;
+    color: $text-muted;
+}
+
+#hub_search {
+    height: auto;
+    margin: 1;
+}
+
+#hub_results {
+    height: 1fr;
+    min-height: 8;
+}
+
+#hub_detail {
     height: auto;
     padding: 1;
     color: $text-muted;

@@ -522,3 +522,64 @@ class TestAutoLiveAndLog:
 
         tree_data = dashboard.get_tree_data()
         assert len(tree_data) >= 1
+
+
+# =========================================================================
+# JugglerDashboard: ArtifactHub search (Phase 5)
+# =========================================================================
+
+
+class TestArtifactHubSearch:
+
+    def test_hub_instance_created(self) -> None:
+        """Dashboard creates an ArtifactHub instance."""
+        app = SimpleK8sInfra(data={"api.image": "myapp:v1"})
+        dashboard = JugglerDashboard(app)
+        assert dashboard._hub is not None
+        assert dashboard._last_search_results == []
+
+    def test_search_charts_returns_results(self) -> None:
+        """search_charts populates _last_search_results."""
+        app = SimpleK8sInfra(data={"api.image": "myapp:v1"})
+        dashboard = JugglerDashboard(app)
+
+        dashboard.search_charts("postgresql")
+
+        results = dashboard.get_search_results()
+        assert len(results) > 0
+        first = results[0]
+        assert "name" in first
+        assert "version" in first
+
+    def test_search_charts_has_expected_fields(self) -> None:
+        """Search results contain expected chart fields."""
+        app = SimpleK8sInfra(data={"api.image": "myapp:v1"})
+        dashboard = JugglerDashboard(app)
+
+        dashboard.search_charts("redis")
+
+        results = dashboard.get_search_results()
+        assert len(results) > 0
+        first = results[0]
+        assert "repo" in first
+        assert "description" in first
+
+    def test_search_empty_query_no_crash(self) -> None:
+        """Empty search does not crash."""
+        app = SimpleK8sInfra(data={"api.image": "myapp:v1"})
+        dashboard = JugglerDashboard(app)
+
+        dashboard.search_charts("")
+        # Should not raise — may return results or empty list
+
+    def test_get_search_results_returns_copy(self) -> None:
+        """get_search_results returns a copy of the results list."""
+        app = SimpleK8sInfra(data={"api.image": "myapp:v1"})
+        dashboard = JugglerDashboard(app)
+
+        dashboard.search_charts("nginx")
+
+        results1 = dashboard.get_search_results()
+        results2 = dashboard.get_search_results()
+        assert results1 is not results2
+        assert results1 == results2
