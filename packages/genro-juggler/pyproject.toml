@@ -57,6 +57,13 @@ dev = [
     "mypy>=1.0",
     "ruff>=0.1.0",
 ]
+docs = [
+    "sphinx>=8.0.0",
+    "sphinx-rtd-theme>=3.0.0",
+    "sphinx-autodoc-typehints>=3.0.0",
+    "myst-parser>=4.0.0",
+    "sphinxcontrib-mermaid>=1.0.0",
+]
 
 [project.scripts]
 juggler = "genro_juggler.cli:main"
